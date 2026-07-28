@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "coalition_rebellion": {
+    "minimum_discontent_groups": 2,
+    "minimum_strong_groups": 1,
+    "required_shared_causes": 1,
+    "required_conditions_any": ["capital_control_weak", "central_army_absent", "major_defeat", "succession_crisis", "famine", "epidemic", "major_disaster", "foreign_war"],
+    "required_assets_any": ["secured_province", "secured_fortress", "secret_network", "private_army", "foreign_backing"],
+    "compatibility_required": true,
+    "warning_signs": ["secret_meetings", "fund_transfers", "private_army_growth", "rumors", "order_refusal", "gate_closure", "tax_refusal", "weapon_stockpile"]
+  },
+  "rebellion_factions": [
+    {"group_type": "aristocracy", "default_goal": "restore_privileges", "movement_type": "aristocratic_revolt"},
+    {"group_type": "military", "default_goal": "seize_command", "movement_type": "military_junta"},
+    {"group_type": "bureaucracy", "default_goal": "restore_old_order", "movement_type": "bureaucratic_opposition"},
+    {"group_type": "religious_estate", "default_goal": "restore_religious_policy", "movement_type": "religious_revolt"},
+    {"group_type": "local_populace", "default_goal": "tax_and_corvee_relief", "movement_type": "popular_revolt"}
+  ],
+  "statehood_requirements": {
+    "minimum_provinces": 2,
+    "minimum_population": 25000,
+    "minimum_survival_turns": 4,
+    "minimum_troops": 1500,
+    "minimum_food": 1200,
+    "minimum_support_value": 55,
+    "requires_named_leader": true,
+    "requires_core_city_or_fortress": true,
+    "requires_legitimacy_claim": true,
+    "requires_tax_capacity": true,
+    "foreign_recognition_bonus": 15,
+    "parent_state_weakness_bonus": 15
+  },
+  "state_name_priority": [
+    "historical_regional_state",
+    "clan_or_tribal_state",
+    "restored_dynasty",
+    "historical_capital_name",
+    "generated_name"
+  ],
+  "capital_priority": [
+    "historical_center",
+    "leader_home",
+    "former_capital",
+    "defensible_city",
+    "logistics_center"
+  ],
+  "negotiation": {
+    "stages": ["opening", "demands", "counteroffer", "final_agreement"],
+    "possible_outcomes": ["independence", "vassalage", "autonomous_domain", "tribute_state", "territorial_compromise", "office_and_title", "joint_government", "armistice", "amnesty", "war_resumes"],
+    "demand_types": ["territory", "state_name", "ruler_title", "tribute", "military_rights", "foreign_policy", "tax_rights", "judicial_rights", "hostages", "prisoner_exchange"],
+    "bargaining_factors": ["territory", "troops", "food", "popular_support", "foreign_backing", "capital_control", "fortress_control", "parent_state_wars", "rebel_division", "legitimacy"]
+  },
+  "armistice": {
+    "requires_separate_agreement": true,
+    "scope_types": ["all_fronts", "front", "province", "siege", "prisoner_exchange", "negotiation_period"],
+    "terms": ["duration_turns", "scope_ids", "movement_policy", "reinforcement_allowed", "recruitment_allowed", "wall_repair_allowed", "supply_stockpiling_allowed", "prisoner_exchange", "auto_resume_war"],
+    "breach_effects": {"legitimacy": -12, "infamy": 18, "trust": -20, "future_acceptance": -15}
+  }
+}
