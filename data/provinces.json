@@ -1,10 +1,10 @@
 {
   "provinces": [
-    {"id":1,"name":"서부 평원","owner":"AUR","population":42,"economy":28,"terrain":"plains","neighbors":[2,4],"polygon":[[90,120],[280,100],[300,260],[110,280]]},
-    {"id":2,"name":"북부 구릉","owner":"BOR","population":31,"economy":19,"terrain":"hills","neighbors":[1,3,5],"polygon":[[280,100],[500,120],[490,280],[300,260]]},
-    {"id":3,"name":"동부 해안","owner":"BOR","population":55,"economy":36,"terrain":"coast","neighbors":[2,6],"polygon":[[500,120],[720,150],[700,310],[490,280]]},
-    {"id":4,"name":"남서 숲","owner":"AUR","population":37,"economy":21,"terrain":"forest","neighbors":[1,5],"polygon":[[110,280],[300,260],[320,450],[120,470]]},
-    {"id":5,"name":"중앙 분지","owner":"CER","population":68,"economy":52,"terrain":"plains","neighbors":[2,4,6],"polygon":[[300,260],[490,280],[510,470],[320,450]]},
-    {"id":6,"name":"남동 항구","owner":"CER","population":49,"economy":47,"terrain":"coast","neighbors":[3,5],"polygon":[[490,280],[700,310],[680,490],[510,470]]}
+    {"id":1,"name":"서부 평원","owner":"AUR","population":42,"economy":28,"development":2,"fort":0,"army":18,"terrain":"plains","neighbors":[2,4],"polygon":[[90,120],[280,100],[300,260],[110,280]]},
+    {"id":2,"name":"북부 구릉","owner":"BOR","population":31,"economy":19,"development":1,"fort":1,"army":14,"terrain":"hills","neighbors":[1,3,5],"polygon":[[280,100],[500,120],[490,280],[300,260]]},
+    {"id":3,"name":"동부 해안","owner":"BOR","population":55,"economy":36,"development":2,"fort":0,"army":11,"terrain":"coast","neighbors":[2,6],"polygon":[[500,120],[720,150],[700,310],[490,280]]},
+    {"id":4,"name":"남서 숲","owner":"AUR","population":37,"economy":21,"development":1,"fort":1,"army":9,"terrain":"forest","neighbors":[1,5],"polygon":[[110,280],[300,260],[320,450],[120,470]]},
+    {"id":5,"name":"중앙 분지","owner":"CER","population":68,"economy":52,"development":3,"fort":1,"army":20,"terrain":"plains","neighbors":[2,4,6],"polygon":[[300,260],[490,280],[510,470],[320,450]]},
+    {"id":6,"name":"남동 항구","owner":"CER","population":49,"economy":47,"development":3,"fort":0,"army":13,"terrain":"coast","neighbors":[3,5],"polygon":[[490,280],[700,310],[680,490],[510,470]]}
   ]
 }
