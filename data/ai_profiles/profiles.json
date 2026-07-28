@@ -1,0 +1,1 @@
+{"schema_version":1,"profiles":[{"id":"balanced","aggression":0.45,"economy_weight":1.0,"diplomacy_weight":1.0,"risk_tolerance":0.5},{"id":"aggressive","aggression":0.78,"economy_weight":0.7,"diplomacy_weight":0.6,"risk_tolerance":0.8},{"id":"merchant","aggression":0.22,"economy_weight":1.4,"diplomacy_weight":1.2,"risk_tolerance":0.3}]}
