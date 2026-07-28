@@ -9,6 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,14 +33,14 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd 2>&1 | tee governance-test.log
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd 2>&1 | tee governance-test.log
 
       - name: Run integrated main runtime test
         id: integrated_tests
         continue-on-error: true
         run: |
           set -o pipefail
-          ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/integrated_main_test_runner.gd 2>&1 | tee integrated-main-test.log
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/integrated_main_test_runner.gd 2>&1 | tee integrated-main-test.log
 
       - name: Upload governance diagnostics
         if: always()
@@ -61,4 +62,4 @@ jobs:
           exit 1
 
       - name: Start integrated main scene
-        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 3
+        run: timeout 30s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 3
