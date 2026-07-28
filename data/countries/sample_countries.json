@@ -1,0 +1,5 @@
+﻿{"schema_version":1,"countries":[
+{"id":"AUR","name":"아우렐리아","color":"#C69B54","capital_province_id":1,"government_id":"monarchy","treasury":220.0,"debt":0.0,"manpower":1400,"stability":72.0,"war_exhaustion":0.0,"technology":{"administration":1,"economy":2,"military":1},"tax_rate":0.25,"ai_profile":"balanced","alive":true},
+{"id":"BOR","name":"보레아 왕국","color":"#567A9B","capital_province_id":4,"government_id":"military_monarchy","treasury":185.0,"debt":0.0,"manpower":1700,"stability":64.0,"war_exhaustion":0.0,"technology":{"administration":1,"economy":1,"military":2},"tax_rate":0.27,"ai_profile":"aggressive","alive":true},
+{"id":"CER","name":"세레니아 공화국","color":"#6E8F65","capital_province_id":7,"government_id":"republic","treasury":250.0,"debt":0.0,"manpower":1100,"stability":80.0,"war_exhaustion":0.0,"technology":{"administration":2,"economy":2,"military":1},"tax_rate":0.22,"ai_profile":"merchant","alive":true}
+]}

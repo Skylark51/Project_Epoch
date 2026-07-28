@@ -1,0 +1,70 @@
+extends RefCounted
+
+const GameState = preload("res://src/core/game_state.gd")
+const GameEvents = preload("res://src/core/game_events.gd")
+const Command = preload("res://src/core/command.gd")
+const CommandQueue = preload("res://src/core/command_queue.gd")
+const TurnProcessor = preload("res://src/core/turn_processor.gd")
+const ScenarioSystem = preload("res://src/systems/scenario_system.gd")
+const SaveManager = preload("res://src/core/save_manager.gd")
+
+var state
+var events := GameEvents.new()
+var queue := CommandQueue.new()
+var processor := TurnProcessor.new()
+var scenarios := ScenarioSystem.new()
+var saves := SaveManager.new()
+
+func start_scenario(path: String = "res://data/scenarios/sample_campaign.json", player_country_id: String = "") -> Dictionary:
+	var loaded := scenarios.load_scenario(path, player_country_id)
+	if not loaded.ok:
+		return loaded
+	state = GameState.new()
+	state.from_dict(loaded.state)
+	queue.restore(state.command_queue)
+	events.scenario_started.emit(get_public_snapshot())
+	return {"ok": true, "snapshot": get_public_snapshot(), "warnings": loaded.get("warnings", [])}
+
+func submit_command(command_type: String, values: Dictionary = {}) -> Dictionary:
+	if state == null:
+		return {"valid": false, "reason": "시나리오가 시작되지 않음"}
+	var country_id := str(values.get("country_id", state.player_country_id))
+	var command := Command.create(command_type, country_id, values)
+	var result := processor.validate_command(state, command)
+	if not result.valid:
+		events.command_rejected.emit({"command": command, "reason": result.reason})
+		return result
+	var submitted := queue.submit(command, state.turn)
+	state.command_queue = queue.to_dict()
+	events.command_queued.emit(submitted.command)
+	return submitted
+
+func end_turn() -> Dictionary:
+	if state == null:
+		return {"ok": false, "reason": "시나리오가 시작되지 않음"}
+	var result := processor.process_turn(state, queue)
+	for phase in result.phases:
+		events.turn_phase_completed.emit(phase.phase, phase.entries)
+	events.turn_completed.emit(result)
+	return {"ok": true, "result": result, "snapshot": get_public_snapshot()}
+
+func save(path: String = "user://autosave.json") -> Dictionary:
+	state.command_queue = queue.to_dict()
+	var result := saves.save_game(state, path)
+	if result.ok:
+		events.save_completed.emit(path)
+	return result
+
+func load(path: String = "user://autosave.json") -> Dictionary:
+	var result := saves.load_game(path)
+	if not result.ok:
+		return result
+	state = result.state
+	queue.restore(state.command_queue)
+	events.load_completed.emit(path)
+	return {"ok": true, "snapshot": get_public_snapshot(), "migrated_from": result.migrated_from}
+
+func get_public_snapshot() -> Dictionary:
+	if state == null:
+		return {}
+	return state.to_dict()
