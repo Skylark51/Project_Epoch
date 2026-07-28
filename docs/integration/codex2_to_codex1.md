@@ -34,4 +34,6 @@ UI는 코어 규칙을 복제하지 않으며 아래 계약이 제공되면 `Str
 
 ## 현재 연결 상태
 
-`StrategyGateway`는 저장소의 JSON을 읽고 UI 명령을 `awaiting_core`로 보관하지만 게임 상태를 변경하지 않습니다. 턴 실행은 `turn_requested(commands)`를 발생시킬 뿐입니다. 이 경계 덕분에 코어 병합 전에도 전체 UI 흐름을 점검할 수 있고, 병합 시 표시 계층을 다시 작성할 필요가 없습니다.
+통합 브랜치에서 `StrategyGateway`가 `GameSession`을 직접 호스팅합니다. 새 게임은 코어 시나리오를 시작하고, UI 명령은 제출 즉시 코어 검증을 거쳐 코어 명령 큐에 저장됩니다. 턴 실행은 `GameSession.end_turn()`을 호출한 뒤 새 공개 스냅샷으로 지도와 패널을 갱신하고 `user://autosave.json`에 자동 저장합니다.
+
+표시 계층은 `owner_id`, `controller_id`, `fort_level`, 군대 엔티티와 전쟁 사전을 UI용 읽기 전용 구조로 변환합니다. 지도 폴리곤이 없는 코어 Province에는 독립적인 fallback geometry를 적용합니다. 미지원 외교 행동과 수도 이전·점령지 관리는 명확한 거부 메시지를 표시하며 코어 상태를 임의로 변경하지 않습니다.

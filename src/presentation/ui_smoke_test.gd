@@ -53,18 +53,23 @@ func _run() -> void:
     for mode in StrategicMap.MODE_LABELS.keys(): map.set_mode(String(mode)); check(map.map_mode==String(mode),"map mode switches: "+String(mode))
     app.selected_province=1; app._queue_recruit(); check(app.gateway.commands().size()==1,"recruit command enters queue")
     app.pending_source=1; app.pending_kind="move"; app.pending_amount=5
-    app._map_target(4)
+    app._map_target(2)
     var queued: Array = app.gateway.commands()
     check(queued.size()==2,"move command enters queue")
     if queued.size()>1:
         var move_command:Dictionary=queued[1]
-        check(move_command.payload.to_id==4,"move destination is preserved")
+        check(move_command.payload.to_id==2,"move destination is preserved")
         app._cancel_queued(int(move_command.id))
         check(app.gateway.commands().size()==1,"command cancellation updates queue")
-    app.selected_province=2; app._open_diplomacy(); check(app.diplomacy_dialog.visible,"diplomacy panel opens for foreign country"); app.diplomacy_dialog.hide()
+    app.selected_province=4; app._open_diplomacy(); check(app.diplomacy_dialog.visible,"diplomacy panel opens for foreign country"); app.diplomacy_dialog.hide()
     app._queue_diplomacy("declare_war","BOR",50,15); check(app.gateway.commands().size()==2,"diplomacy command enters queue")
     app._open_peace(); check(app.peace_dialog.visible,"peace negotiation panel opens"); app._close_peace()
     app.gateway.submit_turn(); await process_frame
+    check(int(app.gateway.snapshot().get("turn",1))==2,"core advances the turn and refreshes the UI snapshot")
+    check(app.gateway.at_war("AUR","BOR"),"queued war declaration changes core diplomacy state")
+    var saved_turn:=int(app.gateway.snapshot().get("turn",0))
+    check(app.gateway.load_autosave(),"core autosave can be loaded from the start-screen flow")
+    check(int(app.gateway.snapshot().get("turn",0))==saved_turn,"loaded snapshot preserves the processed turn")
     check(app.logs.size()>0,"turn request and notifications produce bounded log entries")
     check(app.logs.size()<=app.LOG_LIMIT,"event log respects recent-entry limit")
     app.queue_free(); await process_frame

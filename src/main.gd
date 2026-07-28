@@ -68,10 +68,14 @@ func _build_start() -> Control:
     box.add_child(_label("◆  PROJECT EPOCH  ◆",34,Color("#d7bb79"),HORIZONTAL_ALIGNMENT_CENTER))
     box.add_child(_label("역사의 주도권은 지도 위에서 시작됩니다",16,Color("#aeb9bd"),HORIZONTAL_ALIGNMENT_CENTER)); box.add_child(HSeparator.new())
     box.add_child(_button("새 게임",func():_show(ScreenState.SCENARIO),"primary",58))
-    box.add_child(_button("불러오기",func():_notify("저장 API 연결 대기 중입니다.","info")))
+    box.add_child(_button("불러오기",_load_game))
     box.add_child(_button("설정",_settings)); box.add_child(_button("종료",func():get_tree().quit()))
     box.add_child(_label("Province 중심 대전략 · 데스크톱 고밀도 인터페이스",12,Color("#74828a"),HORIZONTAL_ALIGNMENT_CENTER))
     return root
+
+func _load_game() -> void:
+    if not gateway.load_autosave(): return
+    selected_country=String(gateway.snapshot().get("player_country_id","AUR")); selected_province=-1; _sync_snapshot(gateway.snapshot()); _show(ScreenState.GAME); _notify("자동 저장 게임을 불러왔습니다.","success")
 
 func _build_scenario() -> Control:
     var root:=_margin(18); var outer:=VBoxContainer.new(); outer.add_theme_constant_override("separation",12); root.add_child(outer)
@@ -244,12 +248,14 @@ func _refresh_province() -> void:
 func _queue_recruit() -> void:
     if not _owned_selected(): return
     var id:=gateway.queue_command("recruit",{"province_id":selected_province,"amount":10},{"title":"병력 모집","from":_province_name(selected_province),"amount":10,"cost":20})
+    if id == -1: return
     _add_log("군사","명령 #%d · 병력 10 모집" % id,"normal"); _notify("모집 명령을 추가했습니다.","success")
 
 func _simple_command(kind:String) -> void:
     if not _owned_selected(): return
     var labels:={"develop":"개발 투자","fortify":"요새 건설","move_capital":"수도 이전","occupation":"점령지 관리"}
-    gateway.queue_command(kind,{"province_id":selected_province},{"title":labels.get(kind,kind),"from":_province_name(selected_province),"cost":40})
+    var id:=gateway.queue_command(kind,{"province_id":selected_province},{"title":labels.get(kind,kind),"from":_province_name(selected_province),"cost":40})
+    if id != -1: _notify("명령 큐에 추가했습니다.","success")
 
 func _prepare_move(kind:String="move") -> void:
     if not _owned_selected(): return
@@ -276,6 +282,7 @@ func _map_target(province_id:int) -> void:
     var owner:=String(target.get("owner","")); var kind:="attack" if owner!=selected_country else pending_kind
     if kind=="attack" and not gateway.at_war(selected_country,owner): _notify("전쟁 상태가 아닙니다. 전쟁 선포를 먼저 예약하세요.","warning"); return
     var id:=gateway.queue_command(kind,{"from_id":pending_source,"to_id":province_id,"amount":pending_amount,"leave_garrison":1},{"title":"공격" if kind=="attack" else "이동","from":_province_name(pending_source),"to":_province_name(province_id),"amount":pending_amount,"warning":"전투 발생 가능" if kind=="attack" else ""})
+    if id == -1: return
     _add_log("전쟁" if kind=="attack" else "군사","명령 #%d · %s → %s" % [id,_province_name(pending_source),_province_name(province_id)],"important" if kind=="attack" else "normal"); _cancel_mode(); _notify("명령 큐와 지도 화살표에 반영했습니다.","success")
 
 func _cancel_mode() -> void:
@@ -317,7 +324,10 @@ func _open_diplomacy() -> void:
     diplomacy_dialog.popup_centered()
 
 func _queue_diplomacy(kind:String,target:String,cost:int,acceptance:int) -> void:
+    if kind == "offer_peace":
+        diplomacy_dialog.hide(); _open_peace(); return
     var id:=gateway.queue_command(kind,{"target_country_id":target},{"title":_diplomacy_name(kind),"to":_country_name(target),"cost":cost,"warning":"수락 예상 %d%%" % acceptance})
+    if id == -1: return
     diplomacy_dialog.hide(); _add_log("외교","명령 #%d · %s → %s" % [id,_diplomacy_name(kind),_country_name(target)],"important"); _notify("외교 명령을 예약했습니다.","success")
 
 func _open_peace() -> void:
@@ -329,7 +339,7 @@ func _open_peace() -> void:
     var reparations:=SpinBox.new(); reparations.name="Reparations"; reparations.min_value=0; reparations.max_value=1000; reparations.step=25; reparations.suffix=" 배상금"; ui.peace_box.add_child(reparations)
     var vassal:=CheckBox.new(); vassal.name="Vassalize"; vassal.text="속국화 요구"; ui.peace_box.add_child(vassal)
     var independence:=CheckBox.new(); independence.name="Independence"; independence.text="독립 승인"; ui.peace_box.add_child(independence)
-    ui.peace_box.add_child(_label("협상 비용과 AI 수락 예상치는 코어 평가 API 연결 후 갱신됩니다.",12,Color("#d09b70")))
+    ui.peace_box.add_child(_label("제안 전송 시 코어가 전쟁 점수와 협상 비용을 검증합니다.",12,Color("#d09b70")))
     var row:=HBoxContainer.new(); row.add_child(_button("제안 초기화",_reset_peace)); row.add_child(_button("지도에서 Province 요구",_begin_peace)); row.add_child(_button("제안 전송",_submit_peace.bind(target),"primary")); ui.peace_box.add_child(row)
     peace_dialog.popup_centered()
 
@@ -342,7 +352,9 @@ func _reset_peace() -> void:
 func _submit_peace(target:String) -> void:
     var reparations:=ui.peace_box.get_node_or_null("Reparations") as SpinBox; var vassal:=ui.peace_box.get_node_or_null("Vassalize") as CheckBox; var independence:=ui.peace_box.get_node_or_null("Independence") as CheckBox
     var payload:={"target_country_id":target,"province_demands":peace_demands.duplicate(),"reparations":int(reparations.value if reparations else 0),"vassalize":vassal.button_pressed if vassal else false,"recognize_independence":independence.button_pressed if independence else false}
-    gateway.queue_command("peace_offer",payload,{"title":"평화 제안","to":_country_name(target),"cost":peace_demands.size()*20+int(payload.reparations)/25,"warning":"AI 수락 평가 대기"}); _close_peace(); _notify("평화 제안을 명령 큐에 추가했습니다.","success")
+    var id:=gateway.queue_command("peace_offer",payload,{"title":"평화 제안","to":_country_name(target),"cost":peace_demands.size()*20+int(payload.reparations)/25,"warning":"코어 검증 완료"})
+    if id == -1: return
+    _close_peace(); _notify("평화 제안을 명령 큐에 추가했습니다.","success")
 
 func _close_peace() -> void:
     peace_dialog.hide()
