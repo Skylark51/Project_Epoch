@@ -9,7 +9,10 @@ signal snapshot_changed(snapshot: Dictionary)
 signal command_queue_changed(commands: Array)
 signal turn_requested(commands: Array)
 signal integration_notice(message: String)
+signal new_game_started(snapshot: Dictionary)
+signal autosave_loaded(snapshot: Dictionary)
 
+var autosave_path := AUTOSAVE_PATH
 var game := GameSession.new()
 var _snapshot: Dictionary = {}
 var _scenarios: Array[Dictionary] = []
@@ -47,6 +50,7 @@ func select_player_country(country_id: String) -> bool:
     _commands.clear()
     _next_command_id = 1
     _sync_from_core()
+    new_game_started.emit(snapshot())
     command_queue_changed.emit(commands())
     return true
 
@@ -124,7 +128,7 @@ func submit_turn() -> void:
     _commands.clear()
     command_queue_changed.emit(commands())
     _sync_from_core()
-    var save_result: Dictionary = game.save(AUTOSAVE_PATH)
+    var save_result: Dictionary = game.save(autosave_path)
     if not bool(save_result.get("ok", false)):
         integration_notice.emit("자동 저장 실패: %s" % str(save_result.get("error", "알 수 없는 오류")))
     else:
@@ -150,14 +154,33 @@ func at_war(a: String, b: String) -> bool:
     return false
 
 func load_autosave() -> bool:
-    var result: Dictionary = game.load(AUTOSAVE_PATH)
+    var result: Dictionary = game.load(autosave_path)
     if not bool(result.get("ok", false)):
         integration_notice.emit("불러오기 실패: %s" % str(result.get("error", "저장 파일 없음")))
         return false
     _commands.clear()
-    _sync_from_core()
+    _snapshot = _presentation_snapshot(game.get_public_snapshot())
+    autosave_loaded.emit(snapshot())
+    snapshot_changed.emit(snapshot())
     command_queue_changed.emit(commands())
     return true
+
+func set_governance_save_data(data: Dictionary) -> void:
+    if game.state != null:
+        game.state.governance_state = data.duplicate(true)
+
+func governance_save_data() -> Dictionary:
+    if game.state == null:
+        return {}
+    return game.state.governance_state.duplicate(true)
+
+func save_autosave() -> Dictionary:
+    if game.state == null:
+        return {"ok": false, "error": "시나리오가 시작되지 않음"}
+    var result: Dictionary = game.save(autosave_path)
+    if not bool(result.get("ok", false)):
+        integration_notice.emit("통합 저장 실패: %s" % str(result.get("error", "알 수 없는 오류")))
+    return result
 
 func _map_command(command_type: String, payload: Dictionary) -> Dictionary:
     var player := String(_snapshot.get("player_country_id", ""))

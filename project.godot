@@ -2,8 +2,8 @@
 config_version=5
 
 [application]
-config/name="Project Epoch Integrated Prototype"
-run/main_scene="res://src/integration/integrated_main.tscn"
+config/name="Project Epoch"
+run/main_scene="res://src/main.tscn"
 
 [display]
 window/size/viewport_width=1280

@@ -1,7 +1,7 @@
 extends RefCounted
 
 const GameState = preload("res://src/core/game_state.gd")
-const CURRENT_VERSION := 1
+const CURRENT_VERSION := 2
 
 func save_game(state, path: String) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.WRITE)
@@ -35,6 +35,11 @@ func migrate(data: Dictionary) -> Dictionary:
 		if not migrated.has("command_queue"):
 			migrated.command_queue = {"commands": [], "next_id": 1}
 		version = 1
+	if version == 1:
+		migrated.schema_version = 2
+		if not migrated.has("governance_state"):
+			migrated.governance_state = {}
+		version = 2
 	if version != CURRENT_VERSION:
 		return {"ok": false, "error": "지원하지 않는 세이브 버전: %s" % version}
 	return {"ok": true, "data": migrated, "migrated_from": original}
