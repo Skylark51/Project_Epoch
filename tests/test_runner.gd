@@ -97,4 +97,3 @@ func _finish() -> void:
 	else:
 		print("CORE TEST FAILURES: ", failures)
 		quit(1)
-

@@ -63,4 +63,3 @@ func _update_war_score(state, result: Dictionary) -> void:
 			war.score = float(war.get("score", 0.0)) + (5.0 if result.attacker_wins else -3.0)
 		elif result.attacker_id in defenders and result.defender_id in attackers:
 			war.score = float(war.get("score", 0.0)) + (-5.0 if result.attacker_wins else 3.0)
-
