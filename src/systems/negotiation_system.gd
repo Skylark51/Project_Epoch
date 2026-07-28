@@ -40,18 +40,21 @@ func start_negotiation(initiator_id: String, counterpart_id: String, context: Di
         "history": [_entry("협상이 시작되었다.", "opening", {})],
     }
 
-func propose_demands(negotiation: Dictionary, actor_id: String, demands: Array[Dictionary], leverage_context: Dictionary) -> Dictionary:
+func propose_demands(negotiation: Dictionary, actor_id: String, demands: Array, leverage_context: Dictionary) -> Dictionary:
     if String(negotiation.get("status", "")) != "active":
         return {"accepted": false, "reason": "진행 중인 협상이 아니다."}
     if String(negotiation.get("stage", "opening")) not in ["opening", "demands", "counteroffer"]:
         return {"accepted": false, "reason": "현재 단계에서는 요구안을 제시할 수 없다."}
 
     var validated: Array[Dictionary] = []
-    for demand in demands:
+    for demand_value in demands:
+        if demand_value is not Dictionary:
+            continue
+        var demand: Dictionary = demand_value
         var demand_type := String(demand.get("type", ""))
         if demand_type not in ["territory", "state_name", "ruler_title", "tribute", "military_rights", "foreign_policy", "tax_rights", "judicial_rights", "hostages", "prisoner_exchange"]:
             continue
-        var item := demand.duplicate(true)
+        var item: Dictionary = demand.duplicate(true)
         item["actor_id"] = actor_id
         item["weight"] = demand_weight(item)
         validated.append(item)
@@ -90,7 +93,7 @@ func calculate_leverage(context: Dictionary) -> float:
 
 func demand_weight(demand: Dictionary) -> float:
     var demand_type := String(demand.get("type", ""))
-    var base := {
+    var base: float = float({
         "territory": 18.0,
         "state_name": 7.0,
         "ruler_title": 8.0,
@@ -101,9 +104,9 @@ func demand_weight(demand: Dictionary) -> float:
         "judicial_rights": 12.0,
         "hostages": 9.0,
         "prisoner_exchange": 5.0,
-    }.get(demand_type, 10.0)
+    }.get(demand_type, 10.0))
     var scale := float(demand.get("scale", 1.0))
-    return maxf(float(base) * maxf(scale, 0.1), 1.0)
+    return maxf(base * maxf(scale, 0.1), 1.0)
 
 func evaluate_offer(negotiation: Dictionary, receiver_leverage: float, trust: float, exhaustion: float) -> Dictionary:
     var offered_weight := 0.0
