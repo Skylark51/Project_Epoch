@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "factions": {
+    "AUR": {
+      "government_type": "feudal",
+      "authority_hidden": 68,
+      "legitimacy_hidden": 72,
+      "corruption_hidden": 14,
+      "administration_capacity": 46,
+      "technology_tags": ["council_law", "land_grants", "frontier_command"],
+      "groups": {
+        "aristocracy": {"influence_hidden": 72, "satisfaction_hidden": 58, "mobilization_capacity": 66},
+        "military": {"influence_hidden": 54, "satisfaction_hidden": 62, "mobilization_capacity": 58},
+        "bureaucracy": {"influence_hidden": 48, "satisfaction_hidden": 60, "mobilization_capacity": 38},
+        "religious_estate": {"influence_hidden": 42, "satisfaction_hidden": 55, "mobilization_capacity": 44},
+        "local_populace": {"influence_hidden": 65, "satisfaction_hidden": 66, "mobilization_capacity": 56}
+      }
+    },
+    "BOR": {
+      "government_type": "military_governorate",
+      "authority_hidden": 65,
+      "legitimacy_hidden": 60,
+      "corruption_hidden": 18,
+      "administration_capacity": 42,
+      "technology_tags": ["council_law", "land_grants", "frontier_command"],
+      "groups": {
+        "aristocracy": {"influence_hidden": 62, "satisfaction_hidden": 52, "mobilization_capacity": 64},
+        "military": {"influence_hidden": 78, "satisfaction_hidden": 68, "mobilization_capacity": 80},
+        "bureaucracy": {"influence_hidden": 38, "satisfaction_hidden": 48, "mobilization_capacity": 32},
+        "religious_estate": {"influence_hidden": 44, "satisfaction_hidden": 54, "mobilization_capacity": 46},
+        "local_populace": {"influence_hidden": 61, "satisfaction_hidden": 52, "mobilization_capacity": 60}
+      }
+    },
+    "CER": {
+      "government_type": "aristocratic_council",
+      "authority_hidden": 62,
+      "legitimacy_hidden": 78,
+      "corruption_hidden": 10,
+      "administration_capacity": 62,
+      "technology_tags": ["council_law", "land_grants", "frontier_command", "household_register", "land_survey", "central_law"],
+      "groups": {
+        "aristocracy": {"influence_hidden": 64, "satisfaction_hidden": 68, "mobilization_capacity": 58},
+        "military": {"influence_hidden": 44, "satisfaction_hidden": 58, "mobilization_capacity": 48},
+        "bureaucracy": {"influence_hidden": 72, "satisfaction_hidden": 72, "mobilization_capacity": 42},
+        "religious_estate": {"influence_hidden": 38, "satisfaction_hidden": 62, "mobilization_capacity": 40},
+        "local_populace": {"influence_hidden": 68, "satisfaction_hidden": 74, "mobilization_capacity": 55}
+      }
+    }
+  },
+  "governors": {
+    "1": {"character_id": "GOV_AUR_01", "name": "유진", "governor_type": "royal_feudal_lord", "personality": "proud", "loyalty": 78, "ambition": 58, "administration": 66, "military": 61},
+    "2": {"character_id": "GOV_AUR_02", "name": "장휘", "governor_type": "hereditary_lord", "personality": "pragmatic", "loyalty": 64, "ambition": 66, "administration": 54, "military": 58},
+    "3": {"character_id": "GOV_AUR_03", "name": "서림", "governor_type": "hereditary_lord", "personality": "cautious", "loyalty": 71, "ambition": 38, "administration": 73, "military": 46},
+    "4": {"character_id": "GOV_BOR_01", "name": "고연", "governor_type": "military_governor", "personality": "defiant", "loyalty": 69, "ambition": 72, "administration": 48, "military": 82},
+    "5": {"character_id": "GOV_BOR_02", "name": "탁무", "governor_type": "military_governor", "personality": "pragmatic", "loyalty": 59, "ambition": 63, "administration": 51, "military": 74},
+    "6": {"character_id": "GOV_BOR_03", "name": "한도", "governor_type": "appointed_governor", "personality": "cautious", "loyalty": 75, "ambition": 35, "administration": 67, "military": 55},
+    "7": {"character_id": "GOV_CER_01", "name": "해윤", "governor_type": "appointed_governor", "personality": "pragmatic", "loyalty": 82, "ambition": 44, "administration": 84, "military": 49},
+    "8": {"character_id": "GOV_CER_02", "name": "문규", "governor_type": "appointed_governor", "personality": "cautious", "loyalty": 76, "ambition": 39, "administration": 79, "military": 42},
+    "9": {"character_id": "GOV_CER_03", "name": "노진", "governor_type": "hereditary_lord", "personality": "proud", "loyalty": 61, "ambition": 68, "administration": 57, "military": 63}
+  }
+}

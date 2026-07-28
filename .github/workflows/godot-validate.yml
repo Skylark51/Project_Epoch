@@ -9,6 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,22 +33,33 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd 2>&1 | tee governance-test.log
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd 2>&1 | tee governance-test.log
+
+      - name: Run integrated main runtime test
+        id: integrated_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/integrated_main_test_runner.gd 2>&1 | tee integrated-main-test.log
 
       - name: Upload governance diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: governance-test-log
-          path: governance-test.log
+          name: governance-runtime-test-logs
+          path: |
+            governance-test.log
+            integrated-main-test.log
           if-no-files-found: warn
 
       - name: Fail when governance tests fail
-        if: steps.governance_tests.outcome == 'failure'
+        if: steps.governance_tests.outcome == 'failure' || steps.integrated_tests.outcome == 'failure'
         run: |
           echo "Governance test failure summary:"
-          tail -n 160 governance-test.log
+          tail -n 160 governance-test.log || true
+          echo "Integrated main test failure summary:"
+          tail -n 200 integrated-main-test.log || true
           exit 1
 
-      - name: Start main scene
-        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 2
+      - name: Start integrated main scene
+        run: timeout 30s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 3

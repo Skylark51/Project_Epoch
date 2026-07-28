@@ -11,7 +11,25 @@
 3. Godot 4.x Standard에서 `project.godot` 열기
 4. `F5` 실행
 
-기본 실행 진입점은 `res://src/main.tscn`입니다.
+기본 실행 진입점은 `res://src/integration/integrated_main.tscn`입니다. 기존 전략 화면을 그대로 실행한 뒤 통치·개혁·정치집단·반란 모듈을 동일한 런타임에 결합합니다.
+
+## 출근 후 확인 순서
+
+1. `F5`를 눌러 게임 실행
+2. `새 게임` → 시나리오 선택 → 국가 선택 → 플레이 시작
+3. 게임 화면 우측 상단의 `⚖ 통치 · 반란` 버튼 클릭
+4. 다음 탭을 순서대로 확인
+   - 국가 개요
+   - 정치 집단
+   - 통치체제 개혁
+   - 반란·독립협상
+   - 프로빈스 통치
+   - 통치 기록
+5. 지도에서 다른 프로빈스를 선택한 뒤 `프로빈스 통치` 탭에서 이름 있는 통치자와 핵심 지점 확인
+6. `통치체제 개혁` 탭에서 대상 체제를 선택하고 개혁 시작
+7. 기존 화면의 `턴 실행`을 누르면 경제·전쟁 코어와 통치 시스템이 함께 1턴 진행
+
+통치 상태는 `user://governance_autosave.json`에 별도로 자동 저장됩니다. 기존 코어 자동 저장은 `user://autosave.json`을 계속 사용합니다.
 
 ## 현재 프로젝트 구조
 
@@ -22,12 +40,32 @@ src/world/           월드 세션·취락·도로·영향권 시스템
 src/core/            명령·턴·세이브의 기존 코어
 src/systems/         경제·군사·통치·반란·협상 시스템
 src/governance/      GovernanceSession 통합 파사드
+src/integration/     기존 메인 화면과 통치 시스템의 실행 통합
 src/map/             전략 지도 렌더링과 입력
 src/presentation/    UI와 게임 코어 사이의 어댑터
-src/main.gd           화면 조립과 플레이 흐름
-tests/                Godot headless 테스트 러너
-docs/design/          설계 위키와 구현 명세
+src/main.gd          기존 전략 화면 조립과 플레이 흐름
+tests/               Godot headless 테스트 러너
+docs/design/         설계 위키와 구현 명세
 ```
+
+## 실제 통합된 기능
+
+- 기존 새 게임·국가 선택·지도·모집·이동·전쟁·평화 흐름 유지
+- 기존 코어 턴 증가와 `GovernanceSession` 턴 동기화
+- 모든 국가의 통치체제·권위·정통성·행정력 상태 생성
+- 귀족·군부·관료·종교 세력·지방민 5개 정치 집단 생성
+- 영향력·만족도·반란 위험·근접도의 단계형 표시
+- 최근 10턴의 집단 변화 기록
+- 부족연맹제·귀족연합정·봉건제·군사총독제·군현제·전제 관료제
+- 준비 → 시행 → 정착의 3단계 개혁
+- 협상·매수·숙청·군사 진압 대응
+- 프로빈스마다 이름 있는 통치자와 5~8개 핵심 지점 표시
+- 군사 통제율과 정치적 소유권 분리
+- 복합 조건 공동반란과 집단별 별도 반란군
+- 반란 세력의 국가 선포 진행과 역사적 후보 우선 국호·수도 선택
+- 독립 협상·휴전 상태 표시
+- 통치 알림을 기존 이벤트 로그와 토스트에 연동
+- 통치 상태 자동 저장·복원
 
 ## 확정된 지도 구조
 
@@ -90,26 +128,13 @@ docs/design/          설계 위키와 구현 명세
 
 협상 개시만으로 전투는 멈추지 않습니다. 휴전 기간, 적용 범위, 병력 이동, 증원, 징병, 성벽 보수, 보급 비축, 포로 교환 조건을 별도로 제안하고 합의해야 합니다.
 
-## 통치·반란 모듈 사용
-
-```gdscript
-const GovernanceSession = preload("res://src/governance/governance_session.gd")
-
-var governance := GovernanceSession.new()
-
-governance.governance_changed.connect(_on_governance_changed)
-governance.governance_alert.connect(_on_governance_alert)
-governance.rebellion_started.connect(_on_rebellion_started)
-```
-
-세부 연동 방법은 다음 문서를 기준으로 합니다.
-
-- `docs/design/GOVERNANCE_REBELLION_IMPLEMENTATION.md`
-- `docs/design/역사의시대2_게임설계_통합위키.txt`
-
-이번 시스템은 기존 `src/main.gd`와 지도 UI를 덮어쓰지 않는 독립 모듈로 추가되었습니다. 기존 `WorldSession` 또는 `StrategyGateway`가 `GovernanceSession`을 소유하도록 연결하면 됩니다.
-
 ## 테스트
+
+프로젝트 파싱:
+
+```powershell
+Godot_v4.6.3-stable_win64_console.exe --headless --editor --path . --quit
+```
 
 기존 월드 테스트:
 
@@ -117,30 +142,29 @@ governance.rebellion_started.connect(_on_rebellion_started)
 Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/world_test_runner.gd
 ```
 
-통치·반란 테스트:
+통치·반란 코어 테스트:
 
 ```powershell
 Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/governance_rebellion_test_runner.gd
 ```
 
-통치·반란 테스트 러너는 다음을 검증합니다.
+메인 화면 통합 테스트:
 
-- JSON 정의 로드
-- 프로빈스 통제율과 지방 통치자 결정
-- 3단계 통치체제 개혁
-- 단계형 정치 집단 상태
-- 복합 공동반란 조건
-- 집단별 별도 반란 생성
-- 정식 국가 선포 조건
-- 역사적 국호·수도 우선 선택
-- 단계형 독립 협상
-- 휴전 제안과 위반 판정
+```powershell
+Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/integrated_main_test_runner.gd
+```
 
-## 현재 후속 과제
+통합 테스트는 기존 전략 UI 인스턴스화, GovernanceSession 생성, 3개 국가·9개 프로빈스·5개 정치집단 등록, 이름 있는 통치자, 핵심 지점, 대시보드 열기, 코어 턴과 통치 턴 동기화를 검증합니다.
 
-- 기존 게임 화면에 정치 집단 상세 탭 연결
-- 월드 세이브에 통치·반란 상태 병합
-- 역사적 지방 통치자 데이터 작성
+## 설계 문서
+
+- `docs/design/GOVERNANCE_REBELLION_IMPLEMENTATION.md`
+- `docs/design/역사의시대2_게임설계_통합위키.txt`
+
+## 다음 개발 단계
+
+- 샘플 가상 3국·9개 프로빈스를 실제 고대 동아시아 시나리오로 교체
+- 실제 역사 지방 통치자·가문·국호 후보 데이터 작성
 - 통치체제별 밸런스 조정
-- 휴전 중 병력 재배치의 기본 제한 확정
-- Godot 런타임 및 CI 검증
+- 휴전 조건을 기존 군사 명령 검증과 직접 연결
+- 반란 세력의 군대·점령지를 전략 지도에 별도 색상으로 표시
