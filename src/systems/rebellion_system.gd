@@ -138,7 +138,7 @@ func coalition_eligibility(groups: Array[Dictionary], context: Dictionary) -> Di
     }
 
 func create_separate_rebellions(coalition: Dictionary, groups_by_id: Dictionary, origin_provinces: Array) -> Array[Dictionary]:
-    var rebellions: Array[Dictionary] = []
+    var result: Array[Dictionary] = []
     var group_ids: Array = coalition.get("groups", [])
     for index in range(group_ids.size()):
         var group_id := String(group_ids[index])
@@ -151,21 +151,21 @@ func create_separate_rebellions(coalition: Dictionary, groups_by_id: Dictionary,
             "movement_type": "regional_revolt",
             "name": "지역 반란군",
         })
-        var province_id := String(origin_provinces[index % max(origin_provinces.size(), 1)]) if not origin_provinces.is_empty() else ""
-        rebellions.append({
+        var province_id := String(origin_provinces[index % maxi(origin_provinces.size(), 1)]) if not origin_provinces.is_empty() else ""
+        result.append({
             "rebellion_id": "REB_%s_%d" % [group_id.to_upper(), index + 1],
-            "name": defaults.name,
+            "name": String(defaults.get("name", "지역 반란군")),
             "group_id": group_id,
             "group_type": group_type,
-            "movement_type": defaults.movement_type,
-            "goal": defaults.goal,
+            "movement_type": String(defaults.get("movement_type", "regional_revolt")),
+            "goal": String(defaults.get("goal", "oppose_government")),
             "leader_character_id": String(group.get("representative_character_id", "")),
             "occupied_province_ids": [province_id] if province_id != "" else [],
             "controlled_settlement_ids": [],
             "troops": maxi(int(group.get("mobilization_capacity", 0)) * 20, 200),
             "food": maxi(int(group.get("mobilization_capacity", 0)) * 12, 100),
             "support_hidden": float(group.get("rebellion_risk_hidden", 50.0)),
-            "legitimacy_claim": String(group.get("legitimacy_claim", defaults.goal)),
+            "legitimacy_claim": String(group.get("legitimacy_claim", defaults.get("goal", "oppose_government"))),
             "turns_survived": 0,
             "tax_capacity": false,
             "core_city_or_fortress": false,
@@ -176,20 +176,21 @@ func create_separate_rebellions(coalition: Dictionary, groups_by_id: Dictionary,
             "rival_rebellion_ids": [],
         })
 
-    for rebellion in rebellions:
-        for other in rebellions:
+    for rebellion in result:
+        for other in result:
             if rebellion.rebellion_id == other.rebellion_id:
                 continue
             rebellion.allied_rebellion_ids.append(other.rebellion_id)
-    return rebellions
+    return result
 
 func evaluate_statehood(rebellion: Dictionary, world_context: Dictionary, requirements: Dictionary = {}) -> Dictionary:
-    var rules := STATEHOOD_DEFAULTS.duplicate(true)
+    var rules: Dictionary = STATEHOOD_DEFAULTS.duplicate(true)
     for key in requirements:
         rules[key] = requirements[key]
 
     var population := int(world_context.get("controlled_population", 0))
-    var province_count := rebellion.get("occupied_province_ids", []).size()
+    var occupied_provinces: Array = rebellion.get("occupied_province_ids", [])
+    var province_count: int = occupied_provinces.size()
     var score := 0.0
     var missing: Array[String] = []
 
@@ -228,13 +229,16 @@ func evaluate_statehood(rebellion: Dictionary, world_context: Dictionary, requir
         "proximity": EpochStageScale.stage(score, EpochStageScale.PROXIMITY),
     }
 
-func choose_state_identity(rebellion: Dictionary, historical_candidates: Array[Dictionary], controlled_centers: Array[Dictionary]) -> Dictionary:
+func choose_state_identity(rebellion: Dictionary, historical_candidates: Array, controlled_centers: Array) -> Dictionary:
     var state_name := ""
     var name_source := "generated_name"
 
     var priority := ["historical_regional_state", "clan_or_tribal_state", "restored_dynasty", "historical_capital_name", "generated_name"]
     for source in priority:
-        for candidate in historical_candidates:
+        for candidate_value in historical_candidates:
+            if candidate_value is not Dictionary:
+                continue
+            var candidate: Dictionary = candidate_value
             if String(candidate.get("type", "")) == source and bool(candidate.get("available", true)):
                 state_name = String(candidate.get("name", ""))
                 name_source = source
@@ -248,15 +252,18 @@ func choose_state_identity(rebellion: Dictionary, historical_candidates: Array[D
     var capital_id := ""
     var capital_name := ""
     var best_score := -INF
-    for center in controlled_centers:
-        var score := 0.0
-        if bool(center.get("historical_center", false)): score += 50.0
-        if bool(center.get("leader_home", false)): score += 40.0
-        if bool(center.get("former_capital", false)): score += 35.0
-        score += float(center.get("defense", 0.0)) * 0.20
-        score += float(center.get("logistics", 0.0)) * 0.20
-        if score > best_score:
-            best_score = score
+    for center_value in controlled_centers:
+        if center_value is not Dictionary:
+            continue
+        var center: Dictionary = center_value
+        var center_score := 0.0
+        if bool(center.get("historical_center", false)): center_score += 50.0
+        if bool(center.get("leader_home", false)): center_score += 40.0
+        if bool(center.get("former_capital", false)): center_score += 35.0
+        center_score += float(center.get("defense", 0.0)) * 0.20
+        center_score += float(center.get("logistics", 0.0)) * 0.20
+        if center_score > best_score:
+            best_score = center_score
             capital_id = String(center.get("id", ""))
             capital_name = String(center.get("name", capital_id))
 
