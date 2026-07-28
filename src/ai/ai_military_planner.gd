@@ -1,8 +1,13 @@
 extends RefCounted
+const StrategicMilitary=preload("res://src/systems/strategic_military_system.gd")
+var strategic:=StrategicMilitary.new()
+var last_decisions:Dictionary={}
 
 func plan(state, evaluation: Dictionary) -> Array:
 	var commands := []
 	var country_id := str(evaluation.country_id)
+	var decision: Dictionary = strategic.ai_reason(state, country_id)
+	last_decisions[country_id] = decision
 	var provinces: Array = state.controlled_provinces(country_id)
 	if int(evaluation.manpower) >= 200 and float(evaluation.treasury) >= 10.0 and not provinces.is_empty():
 		commands.append({"command_type": "recruit", "country_id": country_id, "target_id": provinces[0], "amount": 200, "priority": 20})
@@ -15,12 +20,12 @@ func plan(state, evaluation: Dictionary) -> Array:
 		for neighbor_value in state.provinces[source].neighbors:
 			var target := int(neighbor_value)
 			if not war_target.is_empty() and str(state.provinces[target].controller_id) == war_target:
-				commands.append({"command_type": "attack", "country_id": country_id, "source_id": source, "target_id": target, "priority": 30})
+				commands.append({"command_type": "attack", "country_id": country_id, "source_id": source, "target_id": target, "priority": 30, "payload":{"ai_reason_code":decision.code}})
 				return commands
 		for neighbor_value in state.provinces[source].neighbors:
 			var target := int(neighbor_value)
 			if str(state.provinces[target].controller_id) == country_id:
-				commands.append({"command_type": "move", "country_id": country_id, "source_id": source, "target_id": target, "priority": 5})
+				commands.append({"command_type": "move", "country_id": country_id, "source_id": source, "target_id": target, "priority": 5, "payload":{"ai_reason_code":decision.code}})
 				return commands
 	return commands
 
