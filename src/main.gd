@@ -135,7 +135,7 @@ func _on_recruit() -> void:
     _refresh_all()
 
 func _on_declare_war() -> void:
-    var target_country := _selected_foreign_country()
+    var target_country: String = _selected_foreign_country()
     if target_country == "":
         _append_log("전쟁을 선포할 외국 Province를 선택하십시오.")
         return
@@ -143,7 +143,7 @@ func _on_declare_war() -> void:
     _refresh_all()
 
 func _on_offer_peace() -> void:
-    var target_country := _selected_foreign_country()
+    var target_country: String = _selected_foreign_country()
     if target_country == "":
         _append_log("평화를 제안할 외국 Province를 선택하십시오.")
         return
@@ -175,7 +175,7 @@ func _selected_foreign_country() -> String:
         return ""
     if not state.provinces.has(state.selected_province_id):
         return ""
-    var owner := String(state.provinces[state.selected_province_id].get("owner", ""))
+    var owner: String = String(state.provinces[state.selected_province_id].get("owner", ""))
     if owner == state.player_country_id:
         return ""
     return owner
@@ -211,11 +211,11 @@ func _refresh_province_info() -> void:
         return
 
     var province: Dictionary = state.provinces[state.selected_province_id]
-    var owner_id := String(province.get("owner", ""))
+    var owner_id: String = String(province.get("owner", ""))
     var owner: Dictionary = state.countries.get(owner_id, {})
-    var relation_text := state.diplomacy.relation_label(state.player_country_id, owner_id)
-    var relation_value := state.diplomacy.relation(state.player_country_id, owner_id)
-    var war_score := state.diplomacy.war_score(state.player_country_id, owner_id)
+    var relation_text: String = String(state.diplomacy.relation_label(state.player_country_id, owner_id))
+    var relation_value: int = int(state.diplomacy.relation(state.player_country_id, owner_id))
+    var war_score: int = int(state.diplomacy.war_score(state.player_country_id, owner_id))
 
     info_label.text = "[ %s ]\n소유국: %s · %s (%d)\n정부: %s · 기술: %d\n인구: %d · 경제: %d · 개발: %d\n지형: %s · 요새: %d\n주둔군: %d · 예상 방어력: %.1f\n전쟁 점수: %d · 인접: %s" % [
         String(province.get("name", "Province")),
@@ -230,7 +230,7 @@ func _refresh_province_info() -> void:
         String(province.get("terrain", "plains")),
         int(province.get("fort", 0)),
         int(state.armies.get(state.selected_province_id, 0)),
-        state.estimated_defense(state.selected_province_id),
+        float(state.estimated_defense(state.selected_province_id)),
         war_score,
         str(province.get("neighbors", []))
     ]
