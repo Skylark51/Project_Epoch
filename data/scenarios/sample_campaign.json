@@ -1,0 +1,15 @@
+﻿{
+  "schema_version": 1,
+  "id": "sample_campaign",
+  "name": "세 왕국의 균형",
+  "description": "내정, 외교, 전쟁과 평화를 반복하는 독립 샘플 시나리오입니다.",
+  "start_date": {"year": 1000, "month": 1, "day": 1},
+  "turn_days": 30,
+  "default_player_country_id": "AUR",
+  "countries_path": "res://data/countries/sample_countries.json",
+  "provinces_path": "res://data/provinces/sample_provinces.json",
+  "relations": {"AUR|BOR": -35, "AUR|CER": 25, "BOR|CER": -10},
+  "treaties": [],
+  "wars": [],
+  "seed": 424242
+}

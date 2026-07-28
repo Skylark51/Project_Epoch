@@ -1,0 +1,1 @@
+{"schema_version":1,"governments":[{"id":"monarchy","tax_modifier":1.0,"manpower_modifier":1.05,"stability_modifier":0.2},{"id":"military_monarchy","tax_modifier":0.92,"manpower_modifier":1.2,"stability_modifier":-0.1},{"id":"republic","tax_modifier":1.12,"manpower_modifier":0.9,"stability_modifier":0.3}]}
