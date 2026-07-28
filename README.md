@@ -7,11 +7,11 @@
 ## 실행
 
 1. `git pull origin main`
-2. 프로젝트 폴더의 `.godot` 캐시를 삭제
-3. Godot 4.x Standard에서 `project.godot` 열기
-4. `F5` 실행
+2. Godot 4.x Standard에서 `project.godot`을 열고 `F5` 실행
 
-기본 실행 진입점은 `res://src/integration/integrated_main.tscn`입니다. 기존 전략 화면을 그대로 실행한 뒤 통치·개혁·정치집단·반란 모듈을 동일한 런타임에 결합합니다.
+별도의 씬을 직접 실행할 필요가 없습니다. 기준 메인 씬은
+`res://src/main.tscn`이며, 시작 화면부터 전략 지도와 통치·개혁·정치집단·반란
+대시보드까지 하나의 런타임에서 실행됩니다.
 
 ## 출근 후 확인 순서
 
@@ -29,7 +29,7 @@
 6. `통치체제 개혁` 탭에서 대상 체제를 선택하고 개혁 시작
 7. 기존 화면의 `턴 실행`을 누르면 경제·전쟁 코어와 통치 시스템이 함께 1턴 진행
 
-통치 상태는 `user://governance_autosave.json`에 별도로 자동 저장됩니다. 기존 코어 자동 저장은 `user://autosave.json`을 계속 사용합니다.
+코어와 통치 상태는 데이터 버전 2의 `user://autosave.json` 한 파일에 함께 자동 저장됩니다. 새 게임은 저장 상태를 자동 복원하지 않으며, `불러오기`를 선택했을 때만 코어와 통치 상태를 함께 복원합니다.
 
 ## 현재 프로젝트 구조
 
@@ -40,7 +40,7 @@ src/world/           월드 세션·취락·도로·영향권 시스템
 src/core/            명령·턴·세이브의 기존 코어
 src/systems/         경제·군사·통치·반란·협상 시스템
 src/governance/      GovernanceSession 통합 파사드
-src/integration/     기존 메인 화면과 통치 시스템의 실행 통합
+src/ui/              메인 씬에 조립되는 통치 대시보드 UI
 src/map/             전략 지도 렌더링과 입력
 src/presentation/    UI와 게임 코어 사이의 어댑터
 src/main.gd          기존 전략 화면 조립과 플레이 흐름
@@ -151,10 +151,10 @@ Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/g
 메인 화면 통합 테스트:
 
 ```powershell
-Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/integrated_main_test_runner.gd
+Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/main_runtime_test_runner.gd
 ```
 
-통합 테스트는 기존 전략 UI 인스턴스화, GovernanceSession 생성, 3개 국가·9개 프로빈스·5개 정치집단 등록, 이름 있는 통치자, 핵심 지점, 대시보드 열기, 코어 턴과 통치 턴 동기화를 검증합니다.
+메인 런타임 테스트는 기준 메인 씬 로드, GovernanceSession 생성, 3개 국가·9개 프로빈스·5개 정치집단 등록, 이름 있는 통치자, 핵심 지점, 대시보드 열기, 코어·통치 턴 동기화, 통합 자동 저장·복원, 새 게임의 저장 상태 격리를 검증합니다.
 
 ## 설계 문서
 
