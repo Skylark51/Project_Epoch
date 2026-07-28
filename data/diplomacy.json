@@ -1,0 +1,8 @@
+{
+  "relations": [
+    {"a":"AUR","b":"BOR","value":-35},
+    {"a":"AUR","b":"CER","value":25},
+    {"a":"BOR","b":"CER","value":-10}
+  ],
+  "wars": []
+}
