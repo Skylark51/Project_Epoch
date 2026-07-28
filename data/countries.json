@@ -1,0 +1,7 @@
+{
+  "countries": [
+    {"id":"AUR","name":"아우렐리아","color":"#b9824f","treasury":120,"stability":72,"manpower":85},
+    {"id":"BOR","name":"보레알 왕국","color":"#567a9b","treasury":95,"stability":64,"manpower":110},
+    {"id":"CER","name":"세레네 공화국","color":"#6e8f65","treasury":145,"stability":81,"manpower":62}
+  ]
+}
