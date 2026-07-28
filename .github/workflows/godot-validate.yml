@@ -9,18 +9,57 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          show-progress: false
 
       - name: Download Godot 4.6.3
         run: |
-          curl -L --fail --retry 3 -o godot.zip "https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.6.3"
+          curl --silent --show-error -L --fail --retry 3 -o godot.zip "https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.6.3"
           unzip -q godot.zip
           chmod +x Godot_v4.6.3-stable_linux.x86_64
 
       - name: Import and parse project
         run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --editor --path . --quit
 
-      - name: Start main scene
-        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 2
+      - name: Run world tests
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/world_test_runner.gd
+
+      - name: Run governance and rebellion tests
+        id: governance_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd 2>&1 | tee governance-test.log
+
+      - name: Run integrated main runtime test
+        id: integrated_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          timeout 90s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/integrated_main_test_runner.gd 2>&1 | tee integrated-main-test.log
+
+      - name: Upload governance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-runtime-test-logs
+          path: |
+            governance-test.log
+            integrated-main-test.log
+          if-no-files-found: warn
+
+      - name: Fail when governance tests fail
+        if: steps.governance_tests.outcome == 'failure' || steps.integrated_tests.outcome == 'failure'
+        run: |
+          echo "Governance test failure summary:"
+          tail -n 160 governance-test.log || true
+          echo "Integrated main test failure summary:"
+          tail -n 200 integrated-main-test.log || true
+          exit 1
+
+      - name: Start integrated main scene
+        run: timeout 30s ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 3

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "control_stages": [
+    {"id": "unsecured", "name": "미확보", "min": 0},
+    {"id": "foothold", "name": "교두보", "min": 15},
+    {"id": "contested", "name": "분쟁", "min": 35},
+    {"id": "advantage", "name": "우세", "min": 55},
+    {"id": "de_facto", "name": "사실상 장악", "min": 75},
+    {"id": "full_control", "name": "완전 통제", "min": 95}
+  ],
+  "strategic_point_defaults": {
+    "minimum": 5,
+    "maximum": 8,
+    "types": ["capital_city", "village", "fortress", "pass", "port", "ford", "mine", "farm_hub", "crossroads"]
+  },
+  "control_factors": {
+    "core_city_held": 22,
+    "each_major_fort_held": 10,
+    "each_minor_point_held": 4,
+    "supply_connected": 12,
+    "road_connected": 6,
+    "governor_cooperation": 15,
+    "local_support_high": 12,
+    "local_support_low": -12,
+    "enemy_field_army_present": -18,
+    "active_resistance": -15,
+    "adjacent_friendly_majority": 8,
+    "occupation_turn": 3,
+    "pillage_policy": -12,
+    "forced_labor_policy": -8,
+    "relief_policy": 10
+  },
+  "governor_types": [
+    {"id": "appointed_governor", "name": "중앙 임명 지방관", "local_base": -10, "central_loyalty": 18, "surrender_bias": 5},
+    {"id": "hereditary_lord", "name": "세습 영주·호족", "local_base": 22, "central_loyalty": -5, "surrender_bias": -4},
+    {"id": "royal_feudal_lord", "name": "왕족 봉건 영주", "local_base": 18, "central_loyalty": 8, "surrender_bias": -8},
+    {"id": "military_governor", "name": "군사 총독", "local_base": 12, "central_loyalty": 0, "surrender_bias": -12},
+    {"id": "tribal_leader", "name": "부족 지도자", "local_base": 25, "central_loyalty": -8, "surrender_bias": -3},
+    {"id": "religious_leader", "name": "종교 지도자", "local_base": 20, "central_loyalty": 0, "surrender_bias": 0},
+    {"id": "military_administrator", "name": "임시 군정 책임자", "local_base": -5, "central_loyalty": 12, "surrender_bias": 8}
+  ],
+  "governor_decisions": [
+    "unconditional_surrender",
+    "conditional_autonomy",
+    "request_vassalage",
+    "seek_armistice",
+    "flee",
+    "resist",
+    "request_foreign_aid",
+    "replaced_by_coup"
+  ]
+}
