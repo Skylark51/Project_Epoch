@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "reform_stages": [
+    {"id": "none", "name": "개혁 없음", "order": 0},
+    {"id": "preparation", "name": "준비", "order": 1},
+    {"id": "implementation", "name": "시행", "order": 2},
+    {"id": "consolidation", "name": "정착", "order": 3}
+  ],
+  "government_types": [
+    {
+      "id": "tribal_confederation",
+      "name": "부족연맹제",
+      "governor_profile": "tribal_leader",
+      "modifiers": {
+        "central_tax_efficiency": -0.30,
+        "central_command_speed": -0.20,
+        "local_mobilization": 0.25,
+        "local_defense": 0.15,
+        "governor_autonomy": 0.35,
+        "administrative_cost": -0.20
+      },
+      "reform_requirements": {
+        "authority_stage_min": "weak",
+        "administration_capacity_min": 10,
+        "treasury_min": 0,
+        "technology_tags": []
+      }
+    },
+    {
+      "id": "aristocratic_council",
+      "name": "귀족연합정",
+      "governor_profile": "hereditary_lord",
+      "modifiers": {
+        "central_tax_efficiency": -0.15,
+        "central_command_speed": -0.10,
+        "local_mobilization": 0.20,
+        "local_defense": 0.20,
+        "governor_autonomy": 0.25,
+        "aristocrat_influence": 0.30
+      },
+      "reform_requirements": {
+        "authority_stage_min": "weak",
+        "administration_capacity_min": 15,
+        "treasury_min": 100,
+        "technology_tags": ["council_law"]
+      }
+    },
+    {
+      "id": "feudal",
+      "name": "봉건제",
+      "governor_profile": "hereditary_lord",
+      "modifiers": {
+        "central_tax_efficiency": -0.20,
+        "central_command_speed": -0.10,
+        "local_mobilization": 0.30,
+        "local_defense": 0.25,
+        "governor_autonomy": 0.30,
+        "standing_army_cost": -0.10
+      },
+      "reform_requirements": {
+        "authority_stage_min": "ordinary",
+        "administration_capacity_min": 20,
+        "treasury_min": 150,
+        "technology_tags": ["land_grants"]
+      }
+    },
+    {
+      "id": "military_governorate",
+      "name": "군사총독제",
+      "governor_profile": "military_governor",
+      "modifiers": {
+        "central_tax_efficiency": -0.10,
+        "central_command_speed": 0.20,
+        "border_response": 0.35,
+        "local_mobilization": 0.30,
+        "governor_autonomy": 0.20,
+        "warlord_risk": 0.25
+      },
+      "reform_requirements": {
+        "authority_stage_min": "ordinary",
+        "administration_capacity_min": 25,
+        "treasury_min": 200,
+        "technology_tags": ["frontier_command"]
+      }
+    },
+    {
+      "id": "commandery_county",
+      "name": "군현제",
+      "governor_profile": "appointed_governor",
+      "modifiers": {
+        "central_tax_efficiency": 0.25,
+        "central_command_speed": 0.20,
+        "local_mobilization": -0.05,
+        "governor_autonomy": -0.25,
+        "administrative_cost": 0.25,
+        "required_officials": 0.30
+      },
+      "reform_requirements": {
+        "authority_stage_min": "strong",
+        "administration_capacity_min": 55,
+        "treasury_min": 600,
+        "technology_tags": ["household_register", "land_survey", "central_law"]
+      }
+    },
+    {
+      "id": "autocratic_bureaucracy",
+      "name": "전제 관료제",
+      "governor_profile": "appointed_governor",
+      "modifiers": {
+        "central_tax_efficiency": 0.35,
+        "central_command_speed": 0.35,
+        "national_mobilization": 0.25,
+        "governor_autonomy": -0.35,
+        "administrative_cost": 0.40,
+        "ruler_dependency": 0.35,
+        "tyranny_risk": 0.20
+      },
+      "reform_requirements": {
+        "authority_stage_min": "overwhelming",
+        "administration_capacity_min": 80,
+        "treasury_min": 1200,
+        "technology_tags": ["imperial_bureaucracy", "standardized_law", "national_census"]
+      }
+    }
+  ],
+  "reform_responses": [
+    {"id": "negotiate", "name": "협상", "treasury_cost": 0, "progress_delta": -6, "opposition_delta": -12, "legitimacy_delta": 2, "corruption_delta": 0},
+    {"id": "bribe", "name": "매수", "treasury_cost": 250, "progress_delta": 4, "opposition_delta": -20, "legitimacy_delta": -1, "corruption_delta": 8},
+    {"id": "purge", "name": "숙청", "treasury_cost": 80, "progress_delta": 10, "opposition_delta": -28, "legitimacy_delta": -12, "corruption_delta": -2},
+    {"id": "suppress", "name": "군사 진압", "treasury_cost": 180, "progress_delta": 16, "opposition_delta": -18, "legitimacy_delta": -8, "corruption_delta": 0}
+  ]
+}
