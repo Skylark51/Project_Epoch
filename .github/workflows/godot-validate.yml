@@ -22,5 +22,11 @@ jobs:
       - name: Import and parse project
         run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --editor --path . --quit
 
+      - name: Run world tests
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/world_test_runner.gd
+
+      - name: Run governance and rebellion tests
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --script res://tests/governance_rebellion_test_runner.gd
+
       - name: Start main scene
         run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 2
