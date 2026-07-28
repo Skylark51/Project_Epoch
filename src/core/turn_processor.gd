@@ -8,6 +8,7 @@ const BattleSystem = preload("res://src/systems/battle_system.gd")
 const DiplomacySystem = preload("res://src/systems/diplomacy_system.gd")
 const PeaceSystem = preload("res://src/systems/peace_system.gd")
 const StabilitySystem = preload("res://src/systems/stability_system.gd")
+const StrategicMilitary = preload("res://src/systems/strategic_military_system.gd")
 const AIDirector = preload("res://src/ai/ai_director.gd")
 
 var province := ProvinceSystem.new()
@@ -18,6 +19,7 @@ var battle := BattleSystem.new()
 var diplomacy := DiplomacySystem.new()
 var peace := PeaceSystem.new()
 var stability := StabilitySystem.new()
+var strategic := StrategicMilitary.new()
 var ai := AIDirector.new()
 
 func process_turn(state, queue) -> Dictionary:

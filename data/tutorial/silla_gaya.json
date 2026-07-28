@@ -1,0 +1,77 @@
+{
+    "id":  "silla_gaya_military_tutorial",
+    "steps":  [
+                  {
+                      "index":  1,
+                      "action":  "inspect_city",
+                      "title":  "도시 정보 확인",
+                      "completed":  false
+                  },
+                  {
+                      "index":  2,
+                      "action":  "build_farm",
+                      "title":  "농경지 건설",
+                      "completed":  false
+                  },
+                  {
+                      "index":  3,
+                      "action":  "build_barracks",
+                      "title":  "병영 건설",
+                      "completed":  false
+                  },
+                  {
+                      "index":  4,
+                      "action":  "recruit_spearman_archer",
+                      "title":  "창병과 궁병 모집",
+                      "completed":  false
+                  },
+                  {
+                      "index":  5,
+                      "action":  "connect_road",
+                      "title":  "도로 연결",
+                      "completed":  false
+                  },
+                  {
+                      "index":  6,
+                      "action":  "trade_village",
+                      "title":  "인접 촌락 교역",
+                      "completed":  false
+                  },
+                  {
+                      "index":  7,
+                      "action":  "scout_enemy",
+                      "title":  "적대 세력 정찰",
+                      "completed":  false
+                  },
+                  {
+                      "index":  8,
+                      "action":  "win_field_battle",
+                      "title":  "야전 전투",
+                      "completed":  false
+                  },
+                  {
+                      "index":  9,
+                      "action":  "siege_palisade",
+                      "title":  "목책 도시 공성",
+                      "completed":  false
+                  },
+                  {
+                      "index":  10,
+                      "action":  "capture_mountain_fort",
+                      "title":  "산성 점령",
+                      "completed":  false
+                  },
+                  {
+                      "index":  11,
+                      "action":  "integrate_city",
+                      "title":  "도시 통합",
+                      "completed":  false
+                  },
+                  {
+                      "index":  12,
+                      "action":  "form_league",
+                      "title":  "지역 연맹 결성",
+                      "completed":  false
+                  }
+              ]
+}
