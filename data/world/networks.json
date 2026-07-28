@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "connections": [
+    {"id":"road_guknae_hwando","from":"guknaeseong","to":"hwando","type":"mountain_path","level":1},
+    {"id":"road_guknae_jolbon","from":"guknaeseong","to":"jolbon","type":"road","level":1},
+    {"id":"road_hanseong_ungjin","from":"hanseong","to":"ungjin","type":"road","level":1},
+    {"id":"water_ungjin_sabi","from":"ungjin","to":"sabi","type":"waterway","level":1},
+    {"id":"road_darbeol_seorabeol","from":"darbeol","to":"seorabeol","type":"road","level":1},
+    {"id":"road_daegaya_guya","from":"daegaya","to":"guya","type":"road","level":1},
+    {"id":"sea_guya_tsushima","from":"guya","to":"tsushima","type":"sea_route","level":1},
+    {"id":"sea_tsushima_tsukushi","from":"tsushima","to":"tsukushi","type":"sea_route","level":1},
+    {"id":"sea_tsukushi_seto","from":"tsukushi","to":"seto","type":"sea_route","level":1},
+    {"id":"sea_seto_kawachi","from":"seto","to":"kawachi","type":"sea_route","level":1},
+    {"id":"road_kawachi_yamato","from":"kawachi","to":"yamato","type":"road","level":1},
+    {"id":"beacon_seorabeol_siljik","from":"seorabeol","to":"siljik","type":"beacon","level":1},
+    {"id":"road_ye_luoyang","from":"ye","to":"luoyang","type":"road","level":2},
+    {"id":"road_luoyang_changan","from":"luoyang","to":"changan","type":"road","level":2},
+    {"id":"road_xuzhou_guangling","from":"xuzhou","to":"guangling","type":"road","level":2},
+    {"id":"water_guangling_jiankang","from":"guangling","to":"jiankang","type":"waterway","level":2}
+  ],
+  "movement_multipliers": {"road":0.7,"mountain_path":0.8,"waterway":0.65,"sea_route":0.55,"beacon":1.0},
+  "supply_bonuses": {"road":40,"mountain_path":20,"waterway":70,"sea_route":100,"beacon":10}
+}

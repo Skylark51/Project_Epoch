@@ -1,0 +1,1 @@
+{"schema_version":1,"events":[{"id":"high_unrest","trigger":"unrest_at_least","value":70,"effect":{"stability":-3},"text":"지방 불안이 국가 안정도를 흔들고 있습니다."}]}

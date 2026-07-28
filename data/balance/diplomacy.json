@@ -1,0 +1,1 @@
+{"schema_version":1,"declare_war_relation_penalty":40,"improve_relations_amount":12,"improve_relations_cost":8.0,"alliance_min_relation":45,"non_aggression_min_relation":20,"truce_turns":8,"province_peace_cost":20,"reparations_peace_cost_per_10":5,"vassalize_peace_cost":60,"war_score_occupation":15,"war_exhaustion_per_turn":1.5,"peace_acceptance_base":0}

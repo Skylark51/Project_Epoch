@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "buildings": [
+    {"id":"farmland","name":"농경지","cost":{"wood":20,"wealth":15},"upkeep":{},"turns":2,"requires":[],"terrains":["plains","river","coast"],"effects":{"food":18}},
+    {"id":"pasture","name":"목장","cost":{"wood":18,"wealth":12},"upkeep":{},"turns":2,"requires":[],"terrains":["plains","hills"],"effects":{"food":10,"wealth":3}},
+    {"id":"lumber_camp","name":"벌목장","cost":{"wealth":12},"upkeep":{},"turns":2,"requires":[],"terrains":["forest","hills"],"effects":{"wood":16}},
+    {"id":"quarry","name":"채석장","cost":{"wood":12,"wealth":16},"upkeep":{},"turns":3,"requires":[],"terrains":["hills","mountains","pass"],"effects":{"stone":14}},
+    {"id":"iron_mine","name":"철광","cost":{"wood":18,"stone":12,"wealth":22},"upkeep":{"food":1},"turns":4,"requires":[],"terrains":["hills","mountains"],"effects":{"iron":10}},
+    {"id":"market","name":"시장","cost":{"wood":25,"wealth":25},"upkeep":{},"turns":3,"requires":["village"],"terrains":[],"effects":{"wealth":12,"growth":0.03}},
+    {"id":"warehouse","name":"창고","cost":{"wood":30,"stone":12},"upkeep":{},"turns":3,"requires":[],"terrains":[],"effects":{"storage":120}},
+    {"id":"barracks","name":"병영","cost":{"wood":30,"stone":18,"wealth":20},"upkeep":{"wealth":2},"turns":4,"requires":["township"],"terrains":[],"effects":{"garrison":160,"authority":2}},
+    {"id":"stable","name":"마구간","cost":{"wood":32,"wealth":28},"upkeep":{"food":2},"turns":4,"requires":["pasture"],"terrains":["plains","hills"],"effects":{"cavalry_capacity":100}},
+    {"id":"bowyer","name":"궁방","cost":{"wood":35,"wealth":20},"upkeep":{"wood":1},"turns":3,"requires":["village"],"terrains":[],"effects":{"ranged_capacity":120}},
+    {"id":"smithy","name":"대장간","cost":{"wood":20,"stone":24,"iron":12,"wealth":25},"upkeep":{"iron":1},"turns":4,"requires":["township"],"terrains":[],"effects":{"military_output":0.12}},
+    {"id":"office","name":"관청","cost":{"wood":35,"stone":30,"wealth":40},"upkeep":{"wealth":3},"turns":5,"requires":["town"],"terrains":[],"effects":{"authority":12,"influence":0.15}},
+    {"id":"shrine","name":"사당","cost":{"wood":28,"stone":12,"wealth":20},"upkeep":{"wealth":1},"turns":3,"requires":[],"terrains":[],"effects":{"authority":5,"culture":0.12}},
+    {"id":"port","name":"항구","cost":{"wood":50,"stone":25,"wealth":45},"upkeep":{"wealth":3},"turns":6,"requires":["township"],"terrains":["coast","island"],"effects":{"wealth":14,"supply":180,"sea_route":1}},
+    {"id":"road","name":"도로","cost":{"wood":15,"stone":10,"wealth":12},"upkeep":{"wealth":1},"turns":2,"requires":[],"terrains":[],"effects":{"road":1,"supply":40}},
+    {"id":"beacon","name":"봉수대","cost":{"wood":18,"stone":15,"wealth":10},"upkeep":{"wood":1},"turns":2,"requires":[],"terrains":["hills","mountains","coast","pass"],"effects":{"vision":2,"beacon":1}},
+    {"id":"palisade","name":"목책","cost":{"wood":45,"wealth":15},"upkeep":{"wood":1},"turns":3,"requires":[],"terrains":[],"effects":{"fortification":120}},
+    {"id":"wall","name":"성벽","cost":{"stone":80,"wood":30,"wealth":50},"upkeep":{"wealth":3},"turns":7,"requires":["town"],"terrains":[],"effects":{"fortification":350}},
+    {"id":"gate","name":"성문","cost":{"stone":35,"wood":25,"iron":8,"wealth":20},"upkeep":{"wealth":1},"turns":3,"requires":["wall"],"terrains":[],"effects":{"fortification":90,"trade":0.05}},
+    {"id":"mountain_fortress","name":"산성","cost":{"stone":100,"wood":45,"wealth":60},"upkeep":{"food":2,"wealth":3},"turns":8,"requires":["township"],"terrains":["hills","mountains","pass"],"effects":{"fortification":550,"storage":160,"vision":2}},
+    {"id":"palace","name":"왕궁","cost":{"stone":140,"wood":90,"iron":20,"wealth":180},"upkeep":{"wealth":10},"turns":12,"requires":["city"],"terrains":[],"effects":{"authority":35,"influence":0.25}}
+  ]
+}
