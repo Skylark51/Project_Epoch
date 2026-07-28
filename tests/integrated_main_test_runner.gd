@@ -1,9 +1,12 @@
 extends SceneTree
 
 var failures: Array[String] = []
+var finished := false
 
 
 func _initialize() -> void:
+    var watchdog := create_timer(30.0)
+    watchdog.timeout.connect(_watchdog_timeout)
     call_deferred("_run")
 
 
@@ -68,7 +71,17 @@ func _expect(condition: bool, message: String) -> void:
         push_error("[FAIL] %s" % message)
 
 
+func _watchdog_timeout() -> void:
+    if finished:
+        return
+    failures.append("통합 런타임 테스트가 제한 시간 안에 종료되지 않았다.")
+    _finish()
+
+
 func _finish() -> void:
+    if finished:
+        return
+    finished = true
     if failures.is_empty():
         print("Integrated main test: PASS")
         quit(0)
