@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "stage_scales": {
+    "influence": [
+      {"id": "negligible", "name": "미약", "min": 0},
+      {"id": "weak", "name": "약함", "min": 20},
+      {"id": "ordinary", "name": "보통", "min": 40},
+      {"id": "strong", "name": "강함", "min": 60},
+      {"id": "overwhelming", "name": "압도적", "min": 80}
+    ],
+    "satisfaction": [
+      {"id": "furious", "name": "격렬한 반발", "min": 0},
+      {"id": "discontent", "name": "불만", "min": 20},
+      {"id": "neutral", "name": "중립", "min": 40},
+      {"id": "satisfied", "name": "만족", "min": 60},
+      {"id": "supportive", "name": "적극 지지", "min": 80}
+    ],
+    "rebellion_risk": [
+      {"id": "stable", "name": "안정", "min": 0},
+      {"id": "watch", "name": "주의", "min": 20},
+      {"id": "unrest", "name": "불안", "min": 40},
+      {"id": "danger", "name": "위험", "min": 60},
+      {"id": "imminent", "name": "임박", "min": 80}
+    ],
+    "proximity": [
+      {"id": "far", "name": "멀음", "min": 0},
+      {"id": "moving", "name": "진행 중", "min": 20},
+      {"id": "over_half", "name": "절반 이상", "min": 45},
+      {"id": "near", "name": "임박", "min": 70},
+      {"id": "next_turn", "name": "다음 턴 변동 가능", "min": 90}
+    ]
+  },
+  "groups": [
+    {
+      "id": "aristocracy",
+      "name": "귀족",
+      "interests": ["hereditary_rights", "estates", "private_armies", "tax_privileges", "high_office"],
+      "mobilization_source": "retainers",
+      "preferred_responses": ["negotiate", "bribe", "marriage", "grant_office"]
+    },
+    {
+      "id": "military",
+      "name": "군부",
+      "interests": ["command_rights", "pay", "garrisons", "promotion", "war_policy"],
+      "mobilization_source": "standing_army",
+      "preferred_responses": ["grant_command", "increase_pay", "campaign_honor"]
+    },
+    {
+      "id": "bureaucracy",
+      "name": "관료",
+      "interests": ["office_structure", "appointments", "promotion", "law", "administrative_stability"],
+      "mobilization_source": "administrative_obstruction",
+      "preferred_responses": ["negotiate", "grant_office", "legal_compromise"]
+    },
+    {
+      "id": "religious_estate",
+      "name": "종교 세력",
+      "interests": ["state_religion", "ritual", "temple_property", "mission", "religious_rank"],
+      "mobilization_source": "followers",
+      "preferred_responses": ["property_guarantee", "ritual_concession", "negotiate"]
+    },
+    {
+      "id": "local_populace",
+      "name": "지방민",
+      "interests": ["tax", "corvee", "conscription", "security", "food", "disaster_relief"],
+      "mobilization_source": "local_militia",
+      "preferred_responses": ["tax_relief", "grain_release", "end_corvee", "amnesty"]
+    }
+  ],
+  "notification_rules": {
+    "notify_on_stage_change": true,
+    "notify_on_major_demand": true,
+    "notify_on_coalition_sign": true,
+    "detail_history_turns": 10,
+    "show_hidden_numeric_values": false
+  }
+}
