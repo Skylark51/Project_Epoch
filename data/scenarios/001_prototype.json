@@ -2,6 +2,9 @@
   "id":"001_prototype",
   "name":"삼국의 균형",
   "start_date":{"year":1000,"month":1,"day":1},
+  "start_season":0,
   "player_country":"AUR",
+  "diplomacy_file":"res://data/diplomacy.json",
+  "turn_mode":"simultaneous_orders",
   "description":"경제 강국, 군사 강국, 안정된 공화국이 경쟁하는 시스템 검증용 시나리오"
 }
