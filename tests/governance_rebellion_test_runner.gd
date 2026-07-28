@@ -80,7 +80,7 @@ func _test_reform_flow(session) -> void:
     var result = session.respond_to_reform_opposition("F_TEST", "negotiate", "aristocracy")
     _check(bool(result.get("accepted", false)), "협상 대응이 적용되어야 한다.")
 
-    for index in range(20):
+    for index in range(24):
         session.advance_turn({
             "group_contexts": {"F_TEST": {}},
             "reform_contexts": {"F_TEST": {}},
@@ -159,10 +159,11 @@ func _test_rebellion_statehood(session) -> void:
 func _test_negotiation_and_armistice(session) -> void:
     var negotiation = session.begin_negotiation("REB_TEST", "F_TEST", {"deadline_turns": 5})
     var negotiation_id := String(negotiation.get("negotiation_id", ""))
-    var demands = session.propose_negotiation_demands(negotiation_id, "REB_TEST", [
+    var demand_list: Array[Dictionary] = [
         {"type": "state_name", "value": "진국"},
         {"type": "tax_rights", "scale": 0.8},
-    ], {
+    ]
+    var demands = session.propose_negotiation_demands(negotiation_id, "REB_TEST", demand_list, {
         "territory_share": 0.5,
         "troop_ratio": 0.8,
         "food_security": 0.8,
