@@ -40,6 +40,7 @@ func _run() -> void:
     center/=float(province.polygon.size())
     var click:=InputEventMouseButton.new(); click.button_index=MOUSE_BUTTON_LEFT; click.pressed=true; click.position=center*map.zoom+map.pan
     map._gui_input(click); await process_frame
+    var click_release:=InputEventMouseButton.new(); click_release.button_index=MOUSE_BUTTON_LEFT; click_release.pressed=false; click_release.position=click.position; map._gui_input(click_release); await process_frame
     check(app.selected_province==1,"left click selects a Province")
     var old_zoom:=map.zoom; var wheel:=InputEventMouseButton.new(); wheel.button_index=MOUSE_BUTTON_WHEEL_UP; wheel.pressed=true; wheel.position=map.size*0.5; map._gui_input(wheel)
     check(map.zoom>old_zoom,"wheel zooms toward mouse position")
@@ -51,6 +52,14 @@ func _run() -> void:
     check(map.input_state==StrategicMap.InputState.CHOOSING_MOVE_TARGET,"panning restores pending command input state")
     map.clear_interaction()
     for mode in StrategicMap.MODE_LABELS.keys(): map.set_mode(String(mode)); check(map.map_mode==String(mode),"map mode switches: "+String(mode))
+    map.set_selected_provinces([1,2,3]); await process_frame
+    check(app.selected_provinces.size()==3,"multi-selection propagates to Province management UI")
+    app._simple_command("develop"); check(app.gateway.commands().size()==3,"one-click Province management queues a batch task")
+    app.gateway.clear_commands()
+    app._quick_drag_move(1,2); check(app.gateway.commands().size()==1,"drag-and-drop creates a movement task")
+    app.gateway.clear_commands()
+    app._toggle_governor(); check(app.governor_enabled,"Governor automation can be enabled")
+    app._toggle_governor(); map.set_selected_provinces([1]); await process_frame
     app.selected_province=1; app._queue_recruit(); check(app.gateway.commands().size()==1,"recruit command enters queue")
     app.pending_source=1; app.pending_kind="move"; app.pending_amount=5
     app._map_target(2)

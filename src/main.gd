@@ -1,13 +1,17 @@
 extends Control
 
 enum ScreenState { START, SCENARIO, COUNTRY, GAME }
-const MAP_MODES := [["political","정치"],["relations","외교"],["war","전쟁"],["economy","경제"],["population","인구"],["development","개발"],["manpower","인력"],["stability","안정"],["revolt","반란"],["terrain","지형"],["fort","요새"]]
+const MAP_MODES := [["political","정치"],["relations","외교"],["war","전쟁"],["economy","경제"],["supply","보급"],["population","인구"],["development","개발"],["manpower","인력"],["stability","안정"],["revolt","반란"],["terrain","지형"],["fort","요새"]]
 const LOG_LIMIT := 120
 
 var gateway := StrategyGateway.new()
 var state := ScreenState.START
 var selected_country := "AUR"
 var selected_province := -1
+var selected_provinces: Array[int] = []
+var pending_sources: Array[int] = []
+var governor_enabled := false
+var map_mode_index := 0
 var pending_source := -1
 var pending_kind := ""
 var pending_amount := 0
@@ -31,6 +35,7 @@ func _ready() -> void:
     gateway.command_queue_changed.connect(_rebuild_queue)
     gateway.integration_notice.connect(func(message): _notify(message,"info"); _add_log("일반",message,"normal"))
     gateway.turn_requested.connect(func(commands): _add_log("중요","코어 턴 처리 요청 · %d개 명령" % commands.size(),"important"))
+    gateway.turn_requested.connect(_before_turn)
     if gateway.load_local_catalog():
         selected_country = String(gateway.snapshot().get("player_country_id","AUR"))
         _sync_snapshot(gateway.snapshot())
@@ -54,6 +59,21 @@ func _unhandled_key_input(event: InputEvent) -> void:
         KEY_1,KEY_2,KEY_3,KEY_4,KEY_5,KEY_6:
             var index := int(event.keycode-KEY_1)
             if index < MAP_MODES.size(): _set_map_mode(String(MAP_MODES[index][0]))
+
+func _unhandled_input(event:InputEvent) -> void:
+    if state!=ScreenState.GAME: return
+    if event is InputEventJoypadButton and event.pressed:
+        match event.button_index:
+            JOY_BUTTON_START: gateway.submit_turn()
+            JOY_BUTTON_BACK: _open_ai_assistant()
+            JOY_BUTTON_X: _queue_recruit()
+            JOY_BUTTON_Y: map_mode_index=(map_mode_index+1)%MAP_MODES.size(); _set_map_mode(String(MAP_MODES[map_mode_index][0]))
+            JOY_BUTTON_B: _cancel_mode()
+            JOY_BUTTON_LEFT_SHOULDER: _bottom_tab(ui.bottom_tabs.current_tab-1)
+            JOY_BUTTON_RIGHT_SHOULDER: _bottom_tab(ui.bottom_tabs.current_tab+1)
+    elif event is InputEventJoypadMotion and absf(event.axis_value)>0.35:
+        if event.axis==JOY_AXIS_RIGHT_X: _game_map().nudge_camera(Vector2(-event.axis_value*24.0,0))
+        elif event.axis==JOY_AXIS_RIGHT_Y: _game_map().nudge_camera(Vector2(0,-event.axis_value*24.0))
 
 func _build_screens() -> void:
     var background := ColorRect.new(); background.color=Color("#10161d"); background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); background.mouse_filter=Control.MOUSE_FILTER_IGNORE; add_child(background)
@@ -114,8 +134,10 @@ func _build_game() -> Control:
     split.add_child(_left_panel())
     var center_right:=HSplitContainer.new(); center_right.size_flags_horizontal=Control.SIZE_EXPAND_FILL; center_right.split_offset=760; split.add_child(center_right)
     var center:=VBoxContainer.new(); center.size_flags_horizontal=Control.SIZE_EXPAND_FILL; center.add_theme_constant_override("separation",6); center_right.add_child(center)
+    var macro:=HBoxContainer.new(); macro.add_theme_constant_override("separation",6); center.add_child(macro)
+    macro.add_child(_label("MACRO",12,Color("#d8bd7a"))); macro.add_child(_button("경제 취약지",_smart_recommend.bind("economy"),"small")); macro.add_child(_button("보급 위험",_smart_recommend.bind("supply"),"small")); macro.add_child(_button("선택지 일괄 개발",_simple_command.bind("develop"),"small")); macro.add_child(_button("Governor",_toggle_governor,"small")); macro.add_child(_button("AI 제안",_open_ai_assistant,"small"))
     var map_panel:=PanelContainer.new(); map_panel.size_flags_vertical=Control.SIZE_EXPAND_FILL; map_panel.add_theme_stylebox_override("panel",_style("#0d151c","#46535a",1,8)); center.add_child(map_panel)
-    var map:=StrategicMap.new(); maps[ScreenState.GAME]=map; map.province_selected.connect(_province_pick); map.command_target_selected.connect(_map_target); map.tooltip_changed.connect(_map_tooltip); map_panel.add_child(map)
+    var map:=StrategicMap.new(); maps[ScreenState.GAME]=map; map.province_selected.connect(_province_pick); map.selection_changed.connect(_selection_changed); map.province_dropped.connect(_quick_drag_move); map.command_target_selected.connect(_map_target); map.tooltip_changed.connect(_map_tooltip); map_panel.add_child(map)
     center.add_child(_bottom_panel()); center_right.add_child(_right_panel())
     return root
 
@@ -125,7 +147,7 @@ func _top_bar() -> Control:
     row.add_child(_button("☰",func():_show(ScreenState.START))); var title:=_label("PROJECT EPOCH",18,Color("#d8bd7a")); title.custom_minimum_size.x=160; row.add_child(title)
     for item in [["날짜","date","1000. 1. 1"],["국고","treasury","0"],["수입","income","+0"],["인력","manpower","0"],["안정도","stability","0"],["전쟁 피로","exhaustion","0%"]]:
         var value:=_stat(item[0],item[2]); ui[item[1]]=value; row.add_child(value.get_parent())
-    row.add_spacer(true); row.add_child(_button("알림 0",func():_bottom_tab(1))); row.add_child(_button("턴 실행  Space",gateway.submit_turn,"primary"))
+    row.add_spacer(true); var alerts_button:=_button("알림 0",func():_bottom_tab(1)); ui.alert_button=alerts_button; row.add_child(alerts_button); row.add_child(_button("턴 실행  Space",gateway.submit_turn,"primary"))
     return panel
 
 func _left_panel() -> Control:
@@ -138,6 +160,12 @@ func _left_panel() -> Control:
     var legend:=RichTextLabel.new(); legend.bbcode_enabled=true; legend.fit_content=true; ui.legend=legend; map_box.add_child(legend); tabs.add_child(map_box)
     var nation:=_section("국가 개요"); nation.name="국가"; nation.add_child(_label("국가 자원과 외교 상태를 빠르게 확인합니다.",13,Color("#aab5b9"))); nation.add_child(_button("외교 화면",_open_diplomacy)); nation.add_child(_button("전쟁 · 평화",_open_peace)); tabs.add_child(nation)
     var alerts:=_section("중요 알림"); alerts.name="알림"; alerts.add_child(_label("전쟁, 반란, 외교 제안을 중요도 순으로 표시합니다.",13,Color("#aab5b9"))); tabs.add_child(alerts)
+    var manage:=_section("자동 관리"); manage.name="관리"
+    manage.add_child(_label("Governor가 선택 기준에 따라 반복 투자를 Task Queue에 넣습니다.",12,Color("#aab5b9")))
+    manage.add_child(_button("Governor 켜기/끄기",_toggle_governor,"primary"))
+    manage.add_child(_button("AI Assistant 추천",_open_ai_assistant))
+    manage.add_child(_button("전 영토 중 취약지 선택",_smart_recommend.bind("economy")))
+    tabs.add_child(manage)
     return tabs
 
 func _right_panel() -> Control:
@@ -155,7 +183,7 @@ func _right_panel() -> Control:
 
 func _bottom_panel() -> Control:
     var tabs:=TabContainer.new(); tabs.name="BottomTabs"; tabs.custom_minimum_size.y=188; tabs.mouse_filter=Control.MOUSE_FILTER_STOP; ui.bottom_tabs=tabs
-    var scroll:=ScrollContainer.new(); scroll.name="명령 큐"; scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
+    var scroll:=ScrollContainer.new(); scroll.name="Task Queue"; scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
     var queue:=VBoxContainer.new(); queue.size_flags_horizontal=Control.SIZE_EXPAND_FILL; ui.queue=queue; scroll.add_child(queue); tabs.add_child(scroll)
     var log_box:=VBoxContainer.new(); log_box.name="이벤트 로그"; var filters:=HBoxContainer.new(); log_box.add_child(filters)
     for category in ["전체","전쟁","외교","경제","반란","중요"]: filters.add_child(_button(category,_filter_logs.bind(category),"small"))
@@ -232,40 +260,68 @@ func _start_game() -> void:
     gateway.select_player_country(selected_country); _add_log("중요","%s로 플레이를 시작했습니다." % _country_name(selected_country),"important"); _show(ScreenState.GAME)
 
 func _province_pick(province_id:int) -> void:
-    selected_province=province_id; _game_map().selected_province_id=province_id; _refresh_province()
+    selected_province=province_id
+    if province_id not in selected_provinces: selected_provinces=[province_id]
+    _game_map().selected_province_id=province_id; _refresh_province()
+
+func _selection_changed(ids:Array[int]) -> void:
+    selected_provinces=ids.duplicate(); selected_province=selected_provinces.back() if not selected_provinces.is_empty() else -1; _refresh_province()
+
+func _active_selection() -> Array[int]:
+    return selected_provinces.duplicate() if not selected_provinces.is_empty() else ([selected_province] if selected_province!=-1 else [])
+
+func _owned_selection() -> Array[int]:
+    var result:Array[int]=[]
+    for id in _active_selection():
+        if String(gateway.province(id).get("owner",""))==selected_country: result.append(id)
+    return result
 
 func _refresh_province() -> void:
     if not ui.has("province_detail"): return
     if selected_province==-1:
-        ui.province_title.text="Province를 선택하세요"; ui.province_detail.text="[color=#96a5aa]좌클릭하면 상세 정보와 명령 버튼이 활성화됩니다.[/color]"; return
+        ui.province_title.text="Province를 선택하세요"; ui.province_detail.text="[color=#96a5aa]클릭·Shift 클릭·드래그 박스로 여러 Province를 선택하세요.[/color]"; return
+    if selected_provinces.size()>1:
+        var population:=0; var economy:=0; var manpower:=0; var army_total:=0; var armies:Dictionary=gateway.snapshot().get("armies",{})
+        for id in selected_provinces:
+            var item:=gateway.province(id); population+=int(item.get("population",0)); economy+=int(item.get("economy",0)); manpower+=int(item.get("manpower",0)); army_total+=int(armies.get(id,0))
+        ui.province_title.text="%d개 Province 선택" % selected_provinces.size()
+        ui.province_detail.text="[b]일괄 관리 준비됨[/b]\n\n총 인구  %s\n총 경제  %s\n총 인력  %s\n총 주둔군  %s\n\n개발·요새·모집은 선택한 자국 Province에 한 번에 예약됩니다." % [_number(population),_number(economy),_number(manpower),_number(army_total)]
+        ui.action_status.text="다중 선택 · Shift로 추가/해제 · 빈 영역 드래그 선택"; return
     var province:=gateway.province(selected_province)
     if province.is_empty(): selected_province=-1; _refresh_province(); return
     var owner_id:=String(province.get("owner","")); var owner:=gateway.country(owner_id); var armies:Dictionary=gateway.snapshot().get("armies",{})
     ui.province_title.text=String(province.get("name","Province"))+("  ★ 수도" if int(owner.get("capital_province",-1))==selected_province else "")
-    ui.province_detail.text="[color=#9eacb1]소유국[/color]  [b]%s[/b]\n[color=#9eacb1]점령국[/color]  %s\n\n인구  [b]%s[/b]     경제  [b]%s[/b]\n개발도  [b]%s[/b]     인력  [b]%s[/b]\n지형  [b]%s[/b]     요새  [b]%s[/b]\n불안도  [b]%s%%[/b]     주둔군  [b]%s[/b]\n\n예상 세입  [color=#7ec59f]+%s[/color]\n예상 모집량  [color=#7ec5c9]+%s[/color]\n인접 Province  %s" % [_country_name(owner_id),_country_name(String(province.get("controller",owner_id))),_number(int(province.get("population",0))),_number(int(province.get("economy",0))),str(province.get("development",0)),_number(int(province.get("manpower",float(province.get("population",0))*0.2))),_terrain(String(province.get("terrain","plains"))),str(province.get("fort",0)),str(province.get("revolt_risk",max(0,100-int(owner.get("stability",70))))),_number(int(armies.get(selected_province,province.get("army",0)))),str(int(float(province.get("economy",0))*float(owner.get("tax_rate",0.2)))),str(int(float(province.get("population",0))*0.12+float(province.get("development",0)))),_neighbor_names(province.get("neighbors",[]))]
+    ui.province_detail.text="[color=#9eacb1]소유국[/color]  [b]%s[/b]\n[color=#9eacb1]점령국[/color]  %s\n\n인구  [b]%s[/b]     경제  [b]%s[/b]\n개발도  [b]%s[/b]     인력  [b]%s[/b]\n지형  [b]%s[/b]     요새  [b]%s[/b]\n불안도  [b]%s%%[/b]     주둔군  [b]%s[/b]\n\n예상 세입  [color=#7ec59f]+%s[/color]\n인접 Province  %s" % [_country_name(owner_id),_country_name(String(province.get("controller",owner_id))),_number(int(province.get("population",0))),_number(int(province.get("economy",0))),str(province.get("development",0)),_number(int(province.get("manpower",0))),_terrain(String(province.get("terrain","plains"))),str(province.get("fort",0)),str(province.get("revolt_risk",0)),_number(int(armies.get(selected_province,0))),str(int(float(province.get("economy",0))*float(owner.get("tax_rate",0.2)))),_neighbor_names(province.get("neighbors",[]))]
     ui.action_status.text="자국 Province" if owner_id==selected_country else ("적국 · 전쟁 중" if gateway.at_war(selected_country,owner_id) else "외국 · 공격 전 전쟁 선포 필요")
 
 func _queue_recruit() -> void:
-    if not _owned_selected(): return
-    var id:=gateway.queue_command("recruit",{"province_id":selected_province,"amount":10},{"title":"병력 모집","from":_province_name(selected_province),"amount":10,"cost":20})
-    if id == -1: return
-    _add_log("군사","명령 #%d · 병력 10 모집" % id,"normal"); _notify("모집 명령을 추가했습니다.","success")
+    var targets:=_owned_selection()
+    if targets.is_empty(): _notify("모집할 자국 Province를 선택하세요.","warning"); return
+    var queued:=0
+    for id in targets:
+        if gateway.queue_command("recruit",{"province_id":id,"amount":100},{"title":"일괄 병력 모집","from":_province_name(id),"amount":100,"cost":2})!=-1: queued+=1
+    _notify("%d개 Province 모집 작업을 Task Queue에 추가했습니다." % queued,"success")
 
 func _simple_command(kind:String) -> void:
-    if not _owned_selected(): return
-    var labels:={"develop":"개발 투자","fortify":"요새 건설","move_capital":"수도 이전","occupation":"점령지 관리"}
-    var id:=gateway.queue_command(kind,{"province_id":selected_province},{"title":labels.get(kind,kind),"from":_province_name(selected_province),"cost":40})
-    if id != -1: _notify("명령 큐에 추가했습니다.","success")
+    var targets:=_owned_selection()
+    if targets.is_empty(): _notify("관리할 자국 Province를 선택하세요.","warning"); return
+    var labels:={"develop":"개발 투자","fortify":"요새 건설","move_capital":"수도 이전","occupation":"점령지 관리"}; var queued:=0
+    for id in targets:
+        if gateway.queue_command(kind,{"province_id":id},{"title":labels.get(kind,kind),"from":_province_name(id),"cost":40})!=-1: queued+=1
+    _notify("%d개 작업을 Task Queue에 추가했습니다." % queued,"success" if queued>0 else "warning")
 
 func _prepare_move(kind:String="move") -> void:
-    if not _owned_selected(): return
-    pending_source=selected_province; pending_kind=kind; var available:=int(gateway.snapshot().get("armies",{}).get(pending_source,0))
-    if available<=1: _notify("이동 가능한 병력이 없습니다.","warning"); _cancel_mode(); return
-    ui.move_amount.max_value=available-1; ui.move_amount.value=available-1; pending_amount=available-1; ui.move_summary.text="%s · 가용 병력 %d" % [_province_name(pending_source),available]
+    pending_sources=_owned_selection()
+    if pending_sources.is_empty(): _notify("출발할 자국 Province를 선택하세요.","warning"); return
+    var armies:Dictionary=gateway.snapshot().get("armies",{}); var available:=0
+    for id in pending_sources: available+=max(0,int(armies.get(id,0))-1)
+    if available<=0: _notify("이동 가능한 병력이 없습니다.","warning"); _cancel_mode(); return
+    pending_source=pending_sources[0]; pending_kind=kind; ui.move_amount.max_value=available; ui.move_amount.value=available; pending_amount=available
+    ui.move_summary.text="%d개 출발지 · 총 가용 병력 %d" % [pending_sources.size(),available]
     _game_map().set_interaction_state(StrategicMap.InputState.MODAL_OPEN,pending_source); move_dialog.popup_centered()
 
 func _move_fraction(fraction:float) -> void:
-    var available:=int(gateway.snapshot().get("armies",{}).get(pending_source,0)); ui.move_amount.value=available-1 if fraction<=0.0 or fraction>=1.0 else max(1,int(float(available)*fraction))
+    var available:=int(ui.move_amount.max_value); ui.move_amount.value=available if fraction<=0.0 or fraction>=1.0 else max(1,int(float(available)*fraction))
 
 func _begin_target() -> void:
     pending_amount=int(ui.move_amount.value); move_dialog.hide(); var target_state:=StrategicMap.InputState.CHOOSING_ATTACK_TARGET if pending_kind=="attack" else StrategicMap.InputState.CHOOSING_MOVE_TARGET
@@ -277,17 +333,61 @@ func _map_target(province_id:int) -> void:
         else: peace_demands.append(province_id)
         _game_map().set_peace_demands(peace_demands); return
     if pending_kind=="": return
-    var source:=gateway.province(pending_source); var target:=gateway.province(province_id)
-    if not _has_neighbor(source, province_id): _notify("인접 Province만 선택할 수 있습니다.","warning"); return
-    var owner:=String(target.get("owner","")); var kind:="attack" if owner!=selected_country else pending_kind
-    if kind=="attack" and not gateway.at_war(selected_country,owner): _notify("전쟁 상태가 아닙니다. 전쟁 선포를 먼저 예약하세요.","warning"); return
-    var id:=gateway.queue_command(kind,{"from_id":pending_source,"to_id":province_id,"amount":pending_amount,"leave_garrison":1},{"title":"공격" if kind=="attack" else "이동","from":_province_name(pending_source),"to":_province_name(province_id),"amount":pending_amount,"warning":"전투 발생 가능" if kind=="attack" else ""})
-    if id == -1: return
-    _add_log("전쟁" if kind=="attack" else "군사","명령 #%d · %s → %s" % [id,_province_name(pending_source),_province_name(province_id)],"important" if kind=="attack" else "normal"); _cancel_mode(); _notify("명령 큐와 지도 화살표에 반영했습니다.","success")
+    var sources:=pending_sources.duplicate() if not pending_sources.is_empty() else [pending_source]
+    var target:=gateway.province(province_id); var owner:=String(target.get("owner","")); var queued:=0
+    for source_id in sources:
+        var source:=gateway.province(int(source_id))
+        if not _has_neighbor(source,province_id): continue
+        var kind:="attack" if owner!=selected_country else pending_kind
+        if kind=="attack" and not gateway.at_war(selected_country,owner): continue
+        var available: int = maxi(1,int(gateway.snapshot().get("armies",{}).get(source_id,0))-1)
+        var amount:=mini(available,max(1,int(float(pending_amount)/float(sources.size()))))
+        if gateway.queue_command(kind,{"from_id":source_id,"to_id":province_id,"amount":amount,"leave_garrison":1},{"title":"일괄 공격" if kind=="attack" else "일괄 이동","from":_province_name(source_id),"to":_province_name(province_id),"amount":amount,"warning":"전투 발생 가능" if kind=="attack" else ""})!=-1: queued+=1
+    _cancel_mode(); _notify("%d개 이동 작업을 Task Queue에 추가했습니다." % queued,"success" if queued>0 else "warning")
+
+func _quick_drag_move(from_id:int,to_id:int) -> void:
+    if String(gateway.province(from_id).get("owner",""))!=selected_country: _notify("자국 군대만 드래그할 수 있습니다.","warning"); return
+    if not _has_neighbor(gateway.province(from_id),to_id): _notify("인접 Province로만 이동할 수 있습니다.","warning"); return
+    var target_owner:=String(gateway.province(to_id).get("owner","")); var kind:="move" if target_owner==selected_country else "attack"
+    if kind=="attack" and not gateway.at_war(selected_country,target_owner): _notify("공격 전 전쟁 상태가 필요합니다.","warning"); return
+    var amount: int = maxi(1,int(gateway.snapshot().get("armies",{}).get(from_id,0))-1)
+    var id:=gateway.queue_command(kind,{"from_id":from_id,"to_id":to_id,"amount":amount,"leave_garrison":1},{"title":"Drag & Drop 이동","from":_province_name(from_id),"to":_province_name(to_id),"amount":amount})
+    if id!=-1: _notify("Drag & Drop 명령을 Task Queue에 추가했습니다.","success")
 
 func _cancel_mode() -> void:
-    move_dialog.hide(); pending_source=-1; pending_kind=""; pending_amount=0; _game_map().clear_interaction()
+    move_dialog.hide(); pending_source=-1; pending_sources.clear(); pending_kind=""; pending_amount=0; _game_map().clear_interaction()
     if ui.has("action_status"): ui.action_status.text="명령 준비 상태가 해제되었습니다."
+
+func _smart_recommend(kind:String="economy") -> void:
+    var owned:=_owned(selected_country)
+    if owned.is_empty(): return
+    owned.sort_custom(func(a:int,b:int)->bool:
+        var pa:=gateway.province(a); var pb:=gateway.province(b)
+        var va:=float(pa.get("economy",0)) if kind=="economy" else float(pa.get("development",0))*18.0+float(pa.get("economy",0))-float(gateway.snapshot().get("armies",{}).get(a,0))*0.01
+        var vb:=float(pb.get("economy",0)) if kind=="economy" else float(pb.get("development",0))*18.0+float(pb.get("economy",0))-float(gateway.snapshot().get("armies",{}).get(b,0))*0.01
+        return va<vb)
+    selected_provinces=[]; for index in range(mini(3,owned.size())): selected_provinces.append(owned[index])
+    selected_province=selected_provinces.back(); _game_map().set_selected_provinces(selected_provinces); _set_map_mode(kind); _game_map().focus_province(selected_province)
+    _notify("AI Assistant가 우선 관리할 %d개 Province를 선택했습니다." % selected_provinces.size(),"info")
+
+func _toggle_governor() -> void:
+    governor_enabled=not governor_enabled; _notify("Governor 자동 관리 %s" % ("활성" if governor_enabled else "비활성"),"success" if governor_enabled else "info")
+
+func _before_turn(_commands:Array) -> void:
+    if governor_enabled: _governor_plan()
+
+func _governor_plan() -> void:
+    var owned:=_owned(selected_country)
+    owned.sort_custom(func(a:int,b:int)->bool:return float(gateway.province(a).get("economy",0))<float(gateway.province(b).get("economy",0)))
+    if not owned.is_empty(): gateway.queue_command("develop",{"province_id":owned[0]},{"title":"Governor 자동 투자","from":_province_name(owned[0]),"cost":40,"warning":"AI 추천"})
+
+func _open_ai_assistant() -> void:
+    var owned:=_owned(selected_country); if owned.is_empty(): return
+    var weakest: int = int(owned[0])
+    for id in owned: if float(gateway.province(id).get("economy",0))<float(gateway.province(weakest).get("economy",0)): weakest=id
+    var dialog:=ConfirmationDialog.new(); dialog.title="AI Assistant · 전략 브리핑"; dialog.dialog_text="추천 1순위: %s 개발 투자\n이유: 자국 내 경제 수치가 가장 낮습니다.\n\n[추천 적용]을 누르면 선택하고 Task Queue에 개발을 예약합니다." % _province_name(weakest); dialog.ok_button_text="추천 적용"
+    dialog.confirmed.connect(func(): selected_provinces=[weakest]; selected_province=weakest; _game_map().set_selected_provinces(selected_provinces); _simple_command("develop"); dialog.queue_free())
+    dialog.canceled.connect(dialog.queue_free); add_child(dialog); dialog.popup_centered(Vector2i(560,300))
 
 func _rebuild_queue(commands:Array) -> void:
     if not ui.has("queue"): return
@@ -391,7 +491,9 @@ func _refresh_wars() -> void:
     ui.wars.text=text
 
 func _add_log(category:String,message:String,importance:String="normal") -> void:
-    logs.append({"category":category,"message":message,"importance":importance,"time":Time.get_time_string_from_system()}); if logs.size()>LOG_LIMIT: logs.pop_front(); _refresh_logs("전체")
+    logs.append({"category":category,"message":message,"importance":importance,"time":Time.get_time_string_from_system()}); if logs.size()>LOG_LIMIT: logs.pop_front()
+    if ui.has("alert_button"): ui.alert_button.text="알림 %d" % logs.size()
+    _refresh_logs("전체")
 func _filter_logs(category:String) -> void: _refresh_logs(category)
 func _refresh_logs(filter:String) -> void:
     if not ui.has("log"): return

@@ -2,6 +2,8 @@ class_name StrategicMap
 extends Control
 
 signal province_selected(province_id: int)
+signal selection_changed(province_ids: Array[int])
+signal province_dropped(from_id: int, to_id: int)
 signal command_target_selected(province_id: int)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
@@ -11,7 +13,7 @@ enum InputState { IDLE, CHOOSING_MOVE_TARGET, CHOOSING_ATTACK_TARGET, SELECTING_
 const MODE_LABELS := {
     "political": "정치", "relations": "외교 관계", "war": "전쟁", "economy": "경제",
     "population": "인구", "development": "개발도", "manpower": "인력", "stability": "안정도",
-    "revolt": "반란 위험", "terrain": "지형", "fort": "요새"
+    "revolt": "반란 위험", "terrain": "지형", "fort": "요새", "supply": "보급"
 }
 const TERRAIN_COLORS := {"plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"), "coast": Color("#58788a")}
 
@@ -22,6 +24,13 @@ var relations: Dictionary = {}
 var wars: Array = []
 var player_country_id := ""
 var selected_province_id := -1
+var selected_province_ids: Array[int] = []
+var _selection_dragging := false
+var _selection_origin := Vector2.ZERO
+var _selection_current := Vector2.ZERO
+var _selection_additive := false
+var _command_drag := false
+var _drag_source_id := -1
 var command_source_id := -1
 var map_mode := "political"
 var input_state: InputState = InputState.IDLE
@@ -108,58 +117,84 @@ func focus_province(province_id: int) -> void:
     _clamp_pan()
     queue_redraw()
 
+func nudge_camera(delta:Vector2) -> void:
+    pan+=delta; _clamp_pan(); queue_redraw()
+
 func _gui_input(event: InputEvent) -> void:
     if input_state == InputState.MODAL_OPEN:
-        accept_event()
-        return
+        accept_event(); return
     if event is InputEventMouseButton:
         var button := event as InputEventMouseButton
         if button.button_index == MOUSE_BUTTON_WHEEL_UP and button.pressed:
-            _zoom_at(button.position, 1.14)
-            accept_event()
+            _zoom_at(button.position, 1.14); accept_event()
         elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN and button.pressed:
-            _zoom_at(button.position, 1.0 / 1.14)
-            accept_event()
+            _zoom_at(button.position, 1.0 / 1.14); accept_event()
         elif button.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
             if button.pressed:
-                _drag_button = button.button_index
-                _drag_origin = button.position
-                _pan_origin = pan
-                _did_drag = false
+                _drag_button = button.button_index; _drag_origin = button.position; _pan_origin = pan; _did_drag = false
             else:
                 if _drag_button == button.button_index and not _did_drag and button.button_index == MOUSE_BUTTON_RIGHT:
                     _handle_target_click(_province_at(button.position))
                 _drag_button = MOUSE_BUTTON_NONE
-                if input_state == InputState.DRAGGING_MAP:
-                    input_state = _state_before_drag
+                if input_state == InputState.DRAGGING_MAP: input_state = _state_before_drag
             accept_event()
-        elif button.button_index == MOUSE_BUTTON_LEFT and button.pressed:
-            var province_id := _province_at(button.position)
-            if input_state in [InputState.CHOOSING_MOVE_TARGET, InputState.CHOOSING_ATTACK_TARGET, InputState.SELECTING_PEACE_TERMS]:
-                _handle_target_click(province_id)
-            elif province_id != -1:
-                selected_province_id = province_id
-                province_selected.emit(province_id)
-                queue_redraw()
+        elif button.button_index == MOUSE_BUTTON_LEFT:
+            if button.pressed:
+                var province_id := _province_at(button.position)
+                if button.ctrl_pressed and province_id != -1 and input_state == InputState.IDLE:
+                    _command_drag = true; _drag_source_id = province_id; _selection_origin = button.position; _selection_current = button.position
+                elif input_state in [InputState.CHOOSING_MOVE_TARGET, InputState.CHOOSING_ATTACK_TARGET, InputState.SELECTING_PEACE_TERMS]:
+                    _handle_target_click(province_id)
+                else:
+                    _selection_dragging = true; _selection_origin = button.position; _selection_current = button.position
+                    _selection_additive = button.shift_pressed
+            elif _command_drag:
+                var target_id := _province_at(button.position)
+                if target_id != -1 and target_id != _drag_source_id: province_dropped.emit(_drag_source_id, target_id)
+                _command_drag = false; _drag_source_id = -1; queue_redraw()
+            elif _selection_dragging:
+                _finish_selection(button.position)
             accept_event()
     elif event is InputEventMouseMotion:
         var motion := event as InputEventMouseMotion
-        if _drag_button != MOUSE_BUTTON_NONE:
+        if _command_drag:
+            _selection_current = motion.position; queue_redraw(); accept_event()
+        elif _selection_dragging:
+            _selection_current = motion.position; queue_redraw(); accept_event()
+        elif _drag_button != MOUSE_BUTTON_NONE:
             if not _did_drag and motion.position.distance_to(_drag_origin) > 5.0:
-                _state_before_drag = input_state
-                _did_drag = true
-                input_state = InputState.DRAGGING_MAP
+                _state_before_drag = input_state; _did_drag = true; input_state = InputState.DRAGGING_MAP
             if _did_drag:
-                pan = _pan_origin + motion.position - _drag_origin
-                _clamp_pan()
-                queue_redraw()
+                pan = _pan_origin + motion.position - _drag_origin; _clamp_pan(); queue_redraw()
             accept_event()
         else:
             var next_hover := _province_at(motion.position)
             if next_hover != _hovered_id:
-                _hovered_id = next_hover
-                tooltip_changed.emit(_tooltip_for(next_hover), motion.global_position)
-                queue_redraw()
+                _hovered_id = next_hover; tooltip_changed.emit(_tooltip_for(next_hover), motion.global_position); queue_redraw()
+
+func _finish_selection(position: Vector2) -> void:
+    _selection_current = position; _selection_dragging = false
+    var next: Array[int] = []
+    if _selection_additive: next.assign(selected_province_ids)
+    if _selection_origin.distance_to(position) < 7.0:
+        var id := _province_at(position)
+        if id != -1:
+            if _selection_additive and id in next: next.erase(id)
+            elif id not in next: next.append(id)
+    else:
+        var rect := Rect2(_selection_origin, position - _selection_origin).abs()
+        for id_value in provinces.keys():
+            var id := int(id_value)
+            var screen_center := _province_center(provinces[id]) * zoom + pan
+            if rect.has_point(screen_center) and id not in next: next.append(id)
+    set_selected_provinces(next)
+
+func set_selected_provinces(ids: Array[int]) -> void:
+    selected_province_ids = ids.duplicate()
+    selected_province_id = selected_province_ids.back() if not selected_province_ids.is_empty() else -1
+    selection_changed.emit(selected_province_ids.duplicate())
+    if selected_province_id != -1: province_selected.emit(selected_province_id)
+    queue_redraw()
 
 func _handle_target_click(province_id: int) -> void:
     if province_id == -1:
@@ -221,7 +256,7 @@ func _draw() -> void:
         draw_colored_polygon(polygon, fill)
         var border := _border_color(province)
         var width := 1.4 / zoom
-        if id == selected_province_id:
+        if id in selected_province_ids or id == selected_province_id:
             border = Color("#f4d58a")
             width = 4.0 / zoom
         elif id == _hovered_id:
@@ -233,6 +268,12 @@ func _draw() -> void:
     _draw_command_paths()
     _draw_icons_and_labels()
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    if _selection_dragging:
+        var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
+        draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
+        draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
+    if _command_drag:
+        draw_dashed_line(_selection_origin, _selection_current, Color("#f0c66b"), 3.0, 10.0, true)
 
 func _draw_grid() -> void:
     var start_x := int(floor(_world_rect.position.x / 80.0)) * 80
@@ -363,6 +404,7 @@ func _numeric_value(province: Dictionary, mode: String) -> float:
         "stability": return float(province.get("stability", countries.get(String(province.get("owner", "")), {}).get("stability", 50)))
         "revolt": return float(province.get("revolt_risk", maxf(0.0, 100.0 - float(province.get("stability", 70)))))
         "fort": return float(province.get("fort", 0))
+        "supply": return clampf(float(province.get("development", 0)) * 18.0 + float(province.get("economy", 0)) - float(armies.get(int(province.get("id", -1)), 0)) * 0.01, 0.0, 100.0)
     return 0.0
 
 func _polygon_for(province: Dictionary) -> PackedVector2Array:
