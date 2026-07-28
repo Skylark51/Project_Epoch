@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "turn_months": 3,
+  "base_growth_rate": 0.012,
+  "food_per_population": 0.018,
+  "authority_influence_weight": 0.45,
+  "population_influence_weight": 0.002,
+  "garrison_influence_weight": 0.015,
+  "culture_influence_weight": 20.0,
+  "road_influence_bonus": 18.0,
+  "hostile_influence_penalty": 0.65,
+  "control_threshold": 55.0,
+  "contested_ratio": 0.8,
+  "supply_base": 100,
+  "flat_mountain_link_defense_bonus": 0.2,
+  "siege_progress_max": 100.0,
+  "settlement_damage_max": 100.0,
+  "auto_manager_reserve_ratio": 0.25,
+  "queue_limit": 8
+}

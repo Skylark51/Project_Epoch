@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "tier_order": ["hamlet","village","township","town","city","capital"],
+  "tier_names": {"hamlet":"촌락","village":"읍락","township":"성읍","town":"도시","city":"대도시","capital":"도성"},
+  "tier_thresholds": {"hamlet":0,"village":1200,"township":3500,"town":9000,"city":22000,"capital":45000},
+  "default_resources": {"population":900,"food":160,"wood":100,"stone":60,"iron":20,"wealth":80,"authority":35},
+  "capital_settlements": ["guknaeseong","hanseong","seorabeol","guya","daegaya","aragawa","sogaya","tamra","usan","ye","jiankang","liaodong","buyeo","yamato","kibi","izumo","tsukushi"],
+  "mountain_fortresses": ["wunushan","hwando","bukhansan","gyerip"],
+  "overrides": {
+    "guknaeseong":{"name":"국내성","tier":"capital","population":18000,"settlement_type":"flat_city","buildings":["farmland","market","warehouse","office","wall"]},
+    "hanseong":{"name":"한성","tier":"capital","population":21000,"settlement_type":"flat_city","buildings":["farmland","market","warehouse","office","wall","port"]},
+    "seorabeol":{"name":"서라벌","tier":"capital","population":15000,"settlement_type":"flat_city","buildings":["farmland","market","shrine","office","palisade"]},
+    "wunushan":{"name":"오녀산성","tier":"township","population":2400,"settlement_type":"mountain_fortress","buildings":["warehouse","beacon","mountain_fortress"]},
+    "hwando":{"name":"환도성","tier":"township","population":3200,"settlement_type":"mountain_fortress","buildings":["warehouse","beacon","mountain_fortress"]},
+    "bukhansan":{"name":"북한산성","tier":"village","population":1800,"settlement_type":"mountain_fortress","buildings":["beacon","palisade"]},
+    "gyerip":{"name":"계립령 산성","tier":"village","population":1400,"settlement_type":"mountain_fortress","buildings":["beacon","palisade"]},
+    "ye":{"name":"업","tier":"capital","population":48000,"settlement_type":"flat_city","buildings":["farmland","market","warehouse","office","wall","palace"]},
+    "jiankang":{"name":"건강","tier":"capital","population":52000,"settlement_type":"flat_city","buildings":["farmland","market","warehouse","office","wall","port","palace"]},
+    "yamato":{"name":"야마토","tier":"capital","population":17000,"settlement_type":"flat_city","buildings":["farmland","market","shrine","office","palisade"]}
+  }
+}

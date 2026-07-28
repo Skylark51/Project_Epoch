@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "terrains": {
+    "plains": {"display_name":"평야","agriculture":1.35,"construction_cost":0.9,"movement_cost":1.0,"growth":1.15,"defense":1.0,"production":{"food":1.3}},
+    "hills": {"display_name":"구릉","agriculture":0.9,"construction_cost":1.15,"movement_cost":1.3,"growth":0.9,"defense":1.2,"production":{"stone":1.15}},
+    "mountains": {"display_name":"산지","agriculture":0.45,"construction_cost":1.55,"movement_cost":1.8,"growth":0.55,"defense":1.55,"production":{"stone":1.35,"iron":1.25}},
+    "forest": {"display_name":"숲","agriculture":0.7,"construction_cost":1.2,"movement_cost":1.4,"growth":0.75,"defense":1.25,"production":{"wood":1.5}},
+    "river": {"display_name":"강","agriculture":1.25,"construction_cost":1.1,"movement_cost":1.25,"growth":1.1,"defense":1.15,"production":{"food":1.2,"wealth":1.1}},
+    "wetlands": {"display_name":"습지","agriculture":0.65,"construction_cost":1.5,"movement_cost":1.7,"growth":0.65,"defense":1.3,"production":{"food":0.8}},
+    "coast": {"display_name":"해안","agriculture":0.85,"construction_cost":1.05,"movement_cost":1.05,"growth":1.0,"defense":1.05,"production":{"food":1.15,"wealth":1.2}},
+    "island": {"display_name":"섬","agriculture":0.7,"construction_cost":1.25,"movement_cost":1.6,"growth":0.8,"defense":1.35,"production":{"food":1.1,"wealth":1.1}},
+    "pass": {"display_name":"고개","agriculture":0.35,"construction_cost":1.4,"movement_cost":1.55,"growth":0.5,"defense":1.6,"production":{"stone":1.1}}
+  }
+}
