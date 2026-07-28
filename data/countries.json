@@ -1,7 +1,43 @@
 {
   "countries": [
-    {"id":"AUR","name":"아우렐리아","color":"#b9824f","treasury":120,"stability":72,"manpower":85},
-    {"id":"BOR","name":"보레알 왕국","color":"#567a9b","treasury":95,"stability":64,"manpower":110},
-    {"id":"CER","name":"세레네 공화국","color":"#6e8f65","treasury":145,"stability":81,"manpower":62}
+    {
+      "id":"AUR",
+      "name":"아우렐리아",
+      "color":"#b9824f",
+      "government":"왕정",
+      "capital_province":1,
+      "treasury":120,
+      "stability":72,
+      "manpower":85,
+      "technology":2,
+      "tax_rate":0.24,
+      "aggression":48
+    },
+    {
+      "id":"BOR",
+      "name":"보레알 왕국",
+      "color":"#567a9b",
+      "government":"군사 왕정",
+      "capital_province":2,
+      "treasury":95,
+      "stability":64,
+      "manpower":110,
+      "technology":1,
+      "tax_rate":0.27,
+      "aggression":74
+    },
+    {
+      "id":"CER",
+      "name":"세레네 공화국",
+      "color":"#6e8f65",
+      "government":"공화정",
+      "capital_province":5,
+      "treasury":145,
+      "stability":81,
+      "manpower":62,
+      "technology":3,
+      "tax_rate":0.22,
+      "aggression":34
+    }
   ]
 }
