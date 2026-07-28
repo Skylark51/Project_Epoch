@@ -1,0 +1,26 @@
+name: Godot Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Godot 4.6.3
+        run: |
+          curl -L --fail --retry 3 -o godot.zip "https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.6.3"
+          unzip -q godot.zip
+          chmod +x Godot_v4.6.3-stable_linux.x86_64
+
+      - name: Import and parse project
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --editor --path . --quit
+
+      - name: Start main scene
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . --quit-after 2
