@@ -15,7 +15,6 @@
 
 F5의 기본 시나리오는 `res://data/scenarios/prototype_east_asia.json`입니다. 고구려·백제·신라·가야와 요동·중국 국경·일본 지역의 11개 플레이 가능 세력과 13개 프로빈스를 불러옵니다. 기존 `sample_campaign.json`은 코어 회귀 테스트에서만 유지합니다.
 
-전략 지도는 28×18 뾰족꼭짓점형 헥사 타일 필드입니다. 중국 동부·요동·한반도·규슈·혼슈의 육지와 주변 바다·해안 타일이 빈칸 없이 이어지며, 하나의 프로빈스는 여러 육지 타일로 표시됩니다.
 
 ## 출근 후 확인 순서
 
@@ -172,3 +171,16 @@ Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/m
 - 통치체제별 밸런스 조정
 - 휴전 조건을 기존 군사 명령 검증과 직접 연결
 - 반란 세력의 군대·점령지를 전략 지도에 별도 색상으로 표시
+
+## 실제 지리 기반 동아시아 대형 지도
+
+F5로 시작하는 전략 지도는 Natural Earth 1:10m 실제 해안선에서 생성한 640×480 사각 타일맵입니다. 한반도·중국 본토·일본 열도와 제주, 울릉도, 독도, 하이난, 타이완, 쓰시마, 류큐, 사할린을 16×16 청크(40×30 = 1,200개)로 관리합니다. 307,200개 타일을 노드나 Dictionary로 만들지 않으며, 전체보기 LOD 또는 카메라 주변 청크만 렌더링합니다.
+
+지도 데이터 재생성:
+
+```powershell
+py -m pip install Pillow
+py scripts/generate_east_asia_map.py
+```
+
+실행 중 `Home`은 전체 지도, `F6`은 타일·경위도 정보, `F7`은 해안 강조, `F8`은 청크 경계, `F9`는 전략 지역 ID를 표시합니다. 원본 데이터·라이선스·투영·가공 과정은 `data/geography/geography_source.md`와 `docs/design/EAST_ASIA_GEOGRAPHIC_MAP.md`에 기록되어 있습니다. 생성된 전체 지도 검증 이미지는 `docs/screenshots/east_asia_world_map.png`입니다.
