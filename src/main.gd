@@ -25,17 +25,29 @@ var diplomacy_dialog: Window
 var peace_dialog: Window
 var toast: PanelContainer
 var toast_timer: Timer
+var shell_preferences := UIShellPreferences.new()
+var top_bar: ConfigurableTopBar
+var notification_center := NotificationCenter.new()
+var notification_presenter: NotificationPresenter
+var notification_sound_player: NotificationSoundPlayer
+var turn_guard := TurnEndGuard.new()
+var turn_dialog: TurnEndDialog
+var city_navigation := CityNavigationAdapter.new()
+var input_router: MapInputRouter
 
 func _ready() -> void:
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     var epoch_theme = load("res://themes/project_epoch_theme.tres")
     if epoch_theme is Theme: theme = epoch_theme
+    shell_preferences.load_preferences()
     _build_screens()
+    _build_ui_shell_services()
     gateway.snapshot_changed.connect(_sync_snapshot)
     gateway.command_queue_changed.connect(_rebuild_queue)
     gateway.integration_notice.connect(func(message): _notify(message,"info"); _add_log("일반",message,"normal"))
     gateway.turn_requested.connect(func(commands): _add_log("중요","코어 턴 처리 요청 · %d개 명령" % commands.size(),"important"))
     gateway.turn_requested.connect(_before_turn)
+    gateway.new_game_started.connect(func(_snapshot): notification_center.clear_for_new_game())
     if gateway.load_local_catalog():
         selected_country = String(gateway.snapshot().get("player_country_id","goguryeo"))
         _sync_snapshot(gateway.snapshot())
@@ -46,14 +58,18 @@ func _ready() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
     if not event.pressed or event.echo or state != ScreenState.GAME: return
     var focused := get_viewport().gui_get_focus_owner()
-    if focused is LineEdit or focused is SpinBox: return
+    if focused is LineEdit or focused is TextEdit or focused is SpinBox: return
+    if event.keycode == KEY_A and event.shift_pressed:
+        _prepare_move("attack")
+        return
+    if event.alt_pressed and event.keycode in [KEY_1, KEY_2, KEY_3]:
+        return
     match event.keycode:
         KEY_ESCAPE:
             if pending_kind != "": _cancel_mode()
             else: _show(ScreenState.START)
-        KEY_SPACE: gateway.submit_turn()
+        KEY_SPACE: _request_end_turn()
         KEY_M: _prepare_move("move")
-        KEY_A: _prepare_move("attack")
         KEY_R: _queue_recruit()
         KEY_F: if selected_province != -1: _game_map().focus_province(selected_province)
         KEY_1,KEY_2,KEY_3,KEY_4,KEY_5,KEY_6:
@@ -64,7 +80,7 @@ func _unhandled_input(event:InputEvent) -> void:
     if state!=ScreenState.GAME: return
     if event is InputEventJoypadButton and event.pressed:
         match event.button_index:
-            JOY_BUTTON_START: gateway.submit_turn()
+            JOY_BUTTON_START: _request_end_turn()
             JOY_BUTTON_BACK: _open_ai_assistant()
             JOY_BUTTON_X: _queue_recruit()
             JOY_BUTTON_Y: map_mode_index=(map_mode_index+1)%MAP_MODES.size(); _set_map_mode(String(MAP_MODES[map_mode_index][0]))
@@ -135,20 +151,16 @@ func _build_game() -> Control:
     var center_right:=HSplitContainer.new(); center_right.size_flags_horizontal=Control.SIZE_EXPAND_FILL; center_right.split_offset=760; split.add_child(center_right)
     var center:=VBoxContainer.new(); center.size_flags_horizontal=Control.SIZE_EXPAND_FILL; center.add_theme_constant_override("separation",6); center_right.add_child(center)
     var macro:=HBoxContainer.new(); macro.add_theme_constant_override("separation",6); center.add_child(macro)
-    macro.add_child(_label("MACRO",12,Color("#d8bd7a"))); macro.add_child(_button("경제 취약지",_smart_recommend.bind("economy"),"small")); macro.add_child(_button("보급 위험",_smart_recommend.bind("supply"),"small")); macro.add_child(_button("선택지 일괄 개발",_simple_command.bind("develop"),"small")); macro.add_child(_button("Governor",_toggle_governor,"small")); macro.add_child(_button("AI 제안",_open_ai_assistant,"small"))
+    macro.add_child(_label("MACRO",12,Color("#d8bd7a"))); macro.add_child(_button("전략",_set_zoom_tier.bind("strategy"),"small")); macro.add_child(_button("지역",_set_zoom_tier.bind("region"),"small")); macro.add_child(_button("근접",_set_zoom_tier.bind("close"),"small")); macro.add_child(_button("경제 취약지",_smart_recommend.bind("economy"),"small")); macro.add_child(_button("보급 위험",_smart_recommend.bind("supply"),"small")); macro.add_child(_button("선택지 일괄 개발",_simple_command.bind("develop"),"small")); macro.add_child(_button("Governor",_toggle_governor,"small")); macro.add_child(_button("AI 제안",_open_ai_assistant,"small"))
     var map_panel:=PanelContainer.new(); map_panel.size_flags_vertical=Control.SIZE_EXPAND_FILL; map_panel.add_theme_stylebox_override("panel",_style("#0d151c","#46535a",1,8)); center.add_child(map_panel)
-    var map:=StrategicMap.new(); maps[ScreenState.GAME]=map; map.province_selected.connect(_province_pick); map.selection_changed.connect(_selection_changed); map.province_dropped.connect(_quick_drag_move); map.command_target_selected.connect(_map_target); map.tooltip_changed.connect(_map_tooltip); map_panel.add_child(map)
+    var map:=StrategicMap.new(); maps[ScreenState.GAME]=map; map.province_selected.connect(_province_pick); map.selection_changed.connect(_selection_changed); map.province_dropped.connect(_quick_drag_move); map.command_target_selected.connect(_map_target); map.tooltip_changed.connect(_map_tooltip); map.city_selected.connect(_on_map_city_selected); map_panel.add_child(map)
     center.add_child(_bottom_panel()); center_right.add_child(_right_panel())
     return root
 
 func _top_bar() -> Control:
-    var panel:=PanelContainer.new(); panel.custom_minimum_size.y=62; panel.add_theme_stylebox_override("panel",_style("#18232c","#8d764b",1,8))
-    var row:=HBoxContainer.new(); row.add_theme_constant_override("separation",10); panel.add_child(row)
-    row.add_child(_button("☰",func():_show(ScreenState.START))); var title:=_label("PROJECT EPOCH",18,Color("#d8bd7a")); title.custom_minimum_size.x=160; row.add_child(title)
-    for item in [["날짜","date","1000. 1. 1"],["국고","treasury","0"],["수입","income","+0"],["인력","manpower","0"],["안정도","stability","0"],["전쟁 피로","exhaustion","0%"]]:
-        var value:=_stat(item[0],item[2]); ui[item[1]]=value; row.add_child(value.get_parent())
-    row.add_spacer(true); var alerts_button:=_button("알림 0",func():_bottom_tab(1)); ui.alert_button=alerts_button; row.add_child(alerts_button); row.add_child(_button("턴 실행  Space",gateway.submit_turn,"primary"))
-    return panel
+    top_bar = ConfigurableTopBar.new()
+    top_bar.set_preferences(shell_preferences)
+    return top_bar
 
 func _left_panel() -> Control:
     var tabs:=TabContainer.new(); tabs.custom_minimum_size.x=230; tabs.mouse_filter=Control.MOUSE_FILTER_STOP
@@ -175,7 +187,7 @@ func _right_panel() -> Control:
     var detail:=RichTextLabel.new(); detail.bbcode_enabled=true; detail.size_flags_vertical=Control.SIZE_EXPAND_FILL; ui.province_detail=detail; province.add_child(detail)
     ui.action_status=_label("지도에서 Province를 선택하세요.",12,Color("#91a0a6")); ui.action_status.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART; province.add_child(ui.action_status)
     var actions:=GridContainer.new(); actions.columns=2; province.add_child(actions)
-    for item in [["병력 모집  R",_queue_recruit,"primary"],["군대 이동  M",_prepare_move.bind("move"),"default"],["공격  A",_prepare_move.bind("attack"),"danger"],["개발 투자",_simple_command.bind("develop"),"default"],["요새 건설",_simple_command.bind("fortify"),"default"],["수도 이전",_simple_command.bind("move_capital"),"default"],["점령지 관리",_simple_command.bind("occupation"),"default"],["외교",_open_diplomacy,"default"]]: actions.add_child(_button(item[0],item[1],item[2]))
+    for item in [["병력 모집  R",_queue_recruit,"primary"],["군대 이동  M",_prepare_move.bind("move"),"default"],["공격  Shift+A",_prepare_move.bind("attack"),"danger"],["개발 투자",_simple_command.bind("develop"),"default"],["요새 건설",_simple_command.bind("fortify"),"default"],["수도 이전",_simple_command.bind("move_capital"),"default"],["점령지 관리",_simple_command.bind("occupation"),"default"],["외교",_open_diplomacy,"default"]]: actions.add_child(_button(item[0],item[1],item[2]))
     tabs.add_child(province)
     var army:=_section("군대"); army.name="군대"; army.add_child(_label("출발지 → 병력 수 → 목적지\n명령은 턴 실행 전까지 취소할 수 있습니다.",13,Color("#aab5b9"))); tabs.add_child(army)
     var diplomacy:=_section("외교"); diplomacy.name="외교"; diplomacy.add_child(_button("선택 국가 외교",_open_diplomacy,"primary")); diplomacy.add_child(_button("평화 협상",_open_peace)); tabs.add_child(diplomacy)
@@ -209,10 +221,42 @@ func _build_dialogs() -> void:
     var peace_scroll:=ScrollContainer.new(); peace_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); peace_dialog.add_child(peace_scroll)
     var peace_box:=VBoxContainer.new(); peace_box.size_flags_horizontal=Control.SIZE_EXPAND_FILL; peace_box.add_theme_constant_override("separation",10); ui.peace_box=peace_box; peace_scroll.add_child(peace_box)
 
+func _build_ui_shell_services() -> void:
+    add_child(notification_center)
+    notification_center.configure(shell_preferences.notification_rules())
+    notification_presenter = NotificationPresenter.new()
+    add_child(notification_presenter)
+    notification_presenter.bind(notification_center)
+    notification_presenter.notification_clicked.connect(_navigate_notification)
+    notification_sound_player = NotificationSoundPlayer.new()
+    add_child(notification_sound_player)
+    notification_center.sound_requested.connect(notification_sound_player.play_notification)
+    notification_center.unread_count_changed.connect(_on_notification_counts)
+    notification_center.pause_requested.connect(_on_notification_pause)
+    turn_guard.bind(notification_center)
+    turn_guard.validation_changed.connect(_on_turn_validation_changed)
+    turn_dialog = TurnEndDialog.new()
+    add_child(turn_dialog)
+    turn_dialog.bind(turn_guard)
+    turn_dialog.continue_requested.connect(_commit_turn)
+    turn_dialog.navigate_requested.connect(_navigate_notification)
+    city_navigation.bind(_game_map())
+    input_router = MapInputRouter.new()
+    add_child(input_router)
+    input_router.bind(_game_map(), city_navigation)
+    input_router.configure(shell_preferences.input_settings())
+    top_bar.turn_end_requested.connect(_request_end_turn)
+    top_bar.main_menu_requested.connect(_show.bind(ScreenState.START))
+    top_bar.notifications_requested.connect(notification_presenter.toggle_list)
+    top_bar.edge_pan_changed.connect(_set_edge_pan)
+    top_bar.notification_rules_changed.connect(notification_center.configure)
+    _on_notification_counts(0, 0)
+
 func _show(next: ScreenState) -> void:
     state=next
     for key in screens: screens[key].visible=key==next
     if ui.has("tooltip"): ui.tooltip.hide()
+    if input_router != null: input_router.set_active(next == ScreenState.GAME)
     if next==ScreenState.SCENARIO: _refresh_scenario(); call_deferred("_frame_map",maps.get(next))
     elif next==ScreenState.COUNTRY: _rebuild_countries(""); _refresh_country(); call_deferred("_frame_map",maps.get(next))
     elif next==ScreenState.GAME: _sync_snapshot(gateway.snapshot()); call_deferred("_frame_map",maps.get(next))
@@ -227,6 +271,8 @@ func _sync_snapshot(snapshot: Dictionary) -> void:
     if ui.has("manpower"): ui.manpower.text=_number(int(country.get("manpower",0)))
     if ui.has("stability"): ui.stability.text=str(country.get("stability",0))
     if ui.has("exhaustion"): ui.exhaustion.text="%d%%" % int(country.get("war_exhaustion",0))
+    if top_bar != null: top_bar.set_snapshot(snapshot, selected_country, notification_center.urgent_unread_count())
+    if maps.has(ScreenState.GAME): _game_map().set_notification_markers(notification_center.map_markers())
     _refresh_province(); _refresh_wars(); _legend()
 
 func _refresh_scenario() -> void:
@@ -264,11 +310,13 @@ func _start_game() -> void:
     gateway.select_player_country(selected_country); _add_log("중요","%s로 플레이를 시작했습니다." % _country_name(selected_country),"important"); _show(ScreenState.GAME)
 
 func _province_pick(province_id:int) -> void:
+    city_navigation.clear_selection()
     selected_province=province_id
     if province_id not in selected_provinces: selected_provinces=[province_id]
     _game_map().selected_province_id=province_id; _refresh_province()
 
 func _selection_changed(ids:Array[int]) -> void:
+    city_navigation.clear_selection()
     selected_provinces=ids.duplicate(); selected_province=selected_provinces.back() if not selected_provinces.is_empty() else -1; _refresh_province()
 
 func _active_selection() -> Array[int]:
@@ -465,6 +513,100 @@ func _close_peace() -> void:
     if pending_kind=="peace": pending_kind=""
     _game_map().clear_interaction()
 
+func _set_zoom_tier(tier: String) -> void:
+    _game_map().set_zoom_tier(tier)
+
+func _on_map_city_selected(city_id: String) -> void:
+    city_navigation.accept_map_selection(city_id)
+
+func set_city_ui_provider(provider: Object) -> void:
+    city_navigation.set_provider(provider)
+
+func get_ordered_city_ids() -> Array[String]:
+    return city_navigation.get_ordered_city_ids()
+
+func get_selected_city_id() -> String:
+    return city_navigation.get_selected_city_id()
+
+func select_city_by_id(city_id: String) -> bool:
+    return city_navigation.select_city_by_id(city_id)
+
+func focus_camera_on_city(city_id: String) -> bool:
+    return city_navigation.focus_camera_on_city(city_id)
+
+func getOrderedCityIds() -> Array[String]:
+    return get_ordered_city_ids()
+
+func getSelectedCityId() -> String:
+    return get_selected_city_id()
+
+func selectCityById(city_id: String) -> bool:
+    return select_city_by_id(city_id)
+
+func focusCameraOnCity(city_id: String) -> bool:
+    return focus_camera_on_city(city_id)
+
+func push_game_notification(value: Dictionary) -> Dictionary:
+    return notification_center.add_notification(value)
+
+func set_notification_rule(kind: String, rule: Dictionary) -> void:
+    shell_preferences.set_notification_rule(kind, rule)
+    notification_center.configure(shell_preferences.notification_rules())
+
+func resolve_game_notification(id: int) -> bool:
+    return notification_center.resolve(id)
+
+func set_turn_validation_items(items: Array) -> void:
+    turn_guard.set_pending_items(items)
+
+func resolve_turn_validation_item(id: String) -> bool:
+    return turn_guard.resolve_item(id)
+
+func _request_end_turn() -> void:
+    turn_dialog.present()
+
+func _commit_turn() -> void:
+    gateway.submit_turn()
+    turn_guard.clear_turn_ignores()
+
+func _on_turn_validation_changed(report: Dictionary) -> void:
+    if top_bar != null:
+        top_bar.set_turn_blocked(not bool(report.can_end_turn), turn_guard.blocking_reason())
+
+func _on_notification_counts(_unread: int, urgent: int) -> void:
+    if top_bar != null:
+        top_bar.set_urgent_count(urgent)
+    if maps.has(ScreenState.GAME):
+        _game_map().set_notification_markers(notification_center.map_markers())
+
+func _on_notification_pause(paused: bool) -> void:
+    get_tree().paused = paused
+
+func _navigate_notification(target: Dictionary) -> void:
+    var type := String(target.get("type", ""))
+    var id = target.get("id", "")
+    if type == "city":
+        city_navigation.select_city_by_id(String(id))
+        city_navigation.focus_camera_on_city(String(id))
+    elif type in ["unit", "army", "corps"]:
+        var province_id := int(target.get("province_id", -1))
+        if province_id != -1:
+            _game_map().focus_province(province_id)
+    elif type == "province":
+        selected_province = int(id)
+        selected_provinces = [selected_province]
+        _game_map().set_selected_provinces(selected_provinces)
+        _game_map().focus_province(selected_province)
+        _refresh_province()
+    elif type == "diplomacy":
+        _open_diplomacy()
+
+func _set_edge_pan(enabled: bool) -> void:
+    if input_router != null:
+        var settings := shell_preferences.input_settings()
+        settings.edge_pan_enabled = enabled
+        input_router.configure(settings)
+
 func _set_map_mode(mode:String) -> void:
     _game_map().set_mode(mode); ui.mode_title.text="%s 지도" % _game_map().mode_label(); _legend(); _notify("%s 지도 모드" % _game_map().mode_label(),"info")
 
@@ -528,7 +670,8 @@ func _notify(message:String,kind:String="info") -> void:
     toast.add_theme_stylebox_override("panel",_style("#22313a",border,1,8)); toast.show(); toast_timer.start(3.2); _on_resize()
 
 func _settings() -> void:
-    var dialog:=AcceptDialog.new(); dialog.title="설정"; dialog.dialog_text="UI 배율·접근성 설정은 저장 API 연결 후 영구 보관됩니다.\n현재 화면은 Container와 anchor로 반응형 배치됩니다."; dialog.confirmed.connect(dialog.queue_free); dialog.canceled.connect(dialog.queue_free); add_child(dialog); dialog.popup_centered(Vector2i(520,220))
+    if top_bar != null:
+        top_bar.call("_open_settings")
 
 func _on_resize() -> void:
     if toast: toast.position=Vector2(get_viewport_rect().size.x*0.5-toast.custom_minimum_size.x*0.5,18)

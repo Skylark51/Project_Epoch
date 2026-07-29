@@ -8,6 +8,7 @@ signal command_target_selected(province_id: int)
 signal city_selected(city_id: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
+signal zoom_tier_changed(tier: String)
 
 enum InputState { IDLE, CHOOSING_MOVE_TARGET, CHOOSING_ATTACK_TARGET, SELECTING_PEACE_TERMS, DRAGGING_MAP, MODAL_OPEN }
 
@@ -65,7 +66,10 @@ var show_coast_highlight := false
 var show_region_ids := false
 var visible_chunk_count := 0
 var last_rendered_tile_count := 0
+var notification_markers: Array[Dictionary] = []
+var _last_zoom_tier := ""
 const PICK_BUCKET_SIZE := 160.0
+const ZOOM_TIERS := {"strategy": 0.18, "region": 0.68, "close": 1.65}
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
@@ -145,8 +149,56 @@ func focus_province(province_id: int) -> void:
     _clamp_pan()
     queue_redraw()
 
+func focus_city(city_id: String) -> bool:
+    if world_map == null:
+        return false
+    for city_value in world_map.cities:
+        if city_value is Dictionary and String(city_value.get("id", "")) == city_id:
+            var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+            pan = size * 0.5 - position * zoom
+            _clamp_pan()
+            queue_redraw()
+            return true
+    return false
+
 func nudge_camera(delta:Vector2) -> void:
     pan+=delta; _clamp_pan(); queue_redraw()
+
+func set_zoom_tier(tier: String) -> void:
+    if ZOOM_TIERS.has(tier):
+        set_zoom_level(float(ZOOM_TIERS[tier]))
+
+func set_zoom_level(value: float, screen_point := Vector2(-1, -1)) -> void:
+    var anchor := screen_point
+    if anchor.x < 0.0 or anchor.y < 0.0:
+        anchor = size * 0.5
+    var before := (anchor - pan) / zoom
+    zoom = clampf(value, min_zoom, max_zoom)
+    pan = anchor - before * zoom
+    _clamp_pan()
+    _emit_camera_state()
+    queue_redraw()
+
+func semantic_zoom_tier() -> String:
+    if zoom < 0.38:
+        return "strategy"
+    if zoom < 1.1:
+        return "region"
+    return "close"
+
+func center_from_minimap(normalized_position: Vector2) -> void:
+    var normalized := normalized_position.clamp(Vector2.ZERO, Vector2.ONE)
+    var center := _world_rect.position + _world_rect.size * normalized
+    pan = size * 0.5 - center * zoom
+    _clamp_pan()
+    queue_redraw()
+
+func set_notification_markers(markers: Array) -> void:
+    notification_markers.clear()
+    for marker in markers:
+        if marker is Dictionary:
+            notification_markers.append(marker.duplicate(true))
+    queue_redraw()
 
 func _gui_input(event: InputEvent) -> void:
     if input_state == InputState.MODAL_OPEN:
@@ -187,6 +239,8 @@ func _gui_input(event: InputEvent) -> void:
                 var clicked_city := _city_at(button.position)
                 if not clicked_city.is_empty():
                     city_selected.emit(clicked_city)
+                    accept_event()
+                    return
                 var province_id := _province_at(button.position)
                 if button.ctrl_pressed and province_id != -1 and input_state == InputState.IDLE:
                     _command_drag = true; _drag_source_id = province_id; _selection_origin = button.position; _selection_current = button.position
@@ -258,12 +312,14 @@ func _handle_target_click(province_id: int) -> void:
         command_target_selected.emit(province_id)
 
 func _zoom_at(screen_point: Vector2, factor: float) -> void:
-    var before := (screen_point - pan) / zoom
-    zoom = clampf(zoom * factor, min_zoom, max_zoom)
-    pan = screen_point - before * zoom
-    _clamp_pan()
+    set_zoom_level(zoom * factor, screen_point)
+
+func _emit_camera_state() -> void:
     camera_changed.emit(zoom)
-    queue_redraw()
+    var tier := semantic_zoom_tier()
+    if tier != _last_zoom_tier:
+        _last_zoom_tier = tier
+        zoom_tier_changed.emit(tier)
 
 func _clamp_pan() -> void:
     if size.x <= 0.0 or size.y <= 0.0:
@@ -378,6 +434,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
     if show_region_ids:
         _draw_region_ids()
     _draw_cities()
+    _draw_notification_markers()
 
 func _draw_world_selection(world_view: Rect2) -> void:
     if selected_province_ids.is_empty() and _hovered_id == -1:
@@ -425,15 +482,41 @@ func _draw_cities() -> void:
         if not bool(city.get("enabled", true)) or not bool(city.get("inBounds", false)):
             continue
         var major := String(city.get("type", "")) == "major_city"
-        if zoom < 0.14 and not major:
+        var tier := semantic_zoom_tier()
+        if tier == "strategy" and not major:
             continue
         var position := Vector2(float(city.get("mapX", 0.0)), float(city.get("mapY", 0.0))) * world_map.tile_size
         var radius := (4.0 if major else 2.6) / zoom
         draw_circle(position, radius, Color("#f4d58a"))
         draw_arc(position, radius, 0.0, TAU, 12, Color("#1c1e1f"), 1.2 / zoom)
-        if zoom >= 0.52:
+        if tier != "strategy":
             var city_font_size := clampi(roundi(12.0 / zoom), 2, 28)
             draw_string(font, position + Vector2(6.0 / zoom, -3.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+
+func _draw_notification_markers() -> void:
+    for marker in notification_markers:
+        var position := Vector2.ZERO
+        var found := false
+        var city_id := String(marker.get("city_id", ""))
+        if not city_id.is_empty():
+            for city_value in world_map.cities:
+                if city_value is Dictionary and String(city_value.get("id", "")) == city_id:
+                    position = Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+                    found = true
+                    break
+        if not found:
+            var province_id := int(marker.get("province_id", -1))
+            if provinces.has(province_id):
+                position = _province_center(provinces[province_id])
+                found = true
+        if not found:
+            continue
+        var color := Color("#f0cb72")
+        if String(marker.get("severity", "")) in ["warning", "urgent", "decision_required"]:
+            color = Color("#ef6f61")
+        var radius := 7.0 / zoom
+        draw_circle(position + Vector2(0, -11.0 / zoom), radius, color)
+        draw_string(ThemeDB.fallback_font, position + Vector2(-2.4 / zoom, -8.2 / zoom), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(roundi(11.0 / zoom), 3, 30), Color("#1a1512"))
 
 func _draw_region_ids() -> void:
     var anchors: Dictionary = world_map.manifest.get("province_anchors", {})
