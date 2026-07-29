@@ -5,6 +5,7 @@ signal province_selected(province_id: int)
 signal selection_changed(province_ids: Array[int])
 signal province_dropped(from_id: int, to_id: int)
 signal command_target_selected(province_id: int)
+signal city_selected(city_id: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
 
@@ -15,6 +16,8 @@ const MODE_LABELS := {
     "population": "인구", "development": "개발도", "manpower": "인력", "stability": "안정도",
     "revolt": "반란 위험", "terrain": "지형", "fort": "요새", "supply": "보급"
 }
+const WorldMapDataScript = preload("res://src/map/world_map_data.gd")
+
 const TERRAIN_COLORS := {
     "plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"),
     "coast": Color("#58788a"), "coastal_water": Color("#1d4b60"), "deep_water": Color("#102f42")
@@ -23,6 +26,8 @@ const TERRAIN_COLORS := {
 var provinces: Dictionary = {}
 var map_tiles: Array = []
 var map_labels: Array = []
+var world_map: WorldMapData
+var world_map_id := ""
 var countries: Dictionary = {}
 var armies: Dictionary = {}
 var relations: Dictionary = {}
@@ -41,8 +46,8 @@ var map_mode := "political"
 var input_state: InputState = InputState.IDLE
 var zoom := 1.0
 var pan := Vector2.ZERO
-var min_zoom := 0.55
-var max_zoom := 4.0
+var min_zoom := 0.05
+var max_zoom := 8.0
 var _drag_origin := Vector2.ZERO
 var _pan_origin := Vector2.ZERO
 var _drag_button := MOUSE_BUTTON_NONE
@@ -54,6 +59,12 @@ var _peace_demands: Array[int] = []
 var _world_rect := Rect2(0, 0, 800, 560)
 var _spatial_buckets: Dictionary = {}
 var _tile_spatial_buckets: Dictionary = {}
+var debug_map_enabled := false
+var show_chunk_boundaries := false
+var show_coast_highlight := false
+var show_region_ids := false
+var visible_chunk_count := 0
+var last_rendered_tile_count := 0
 const PICK_BUCKET_SIZE := 160.0
 
 func _ready() -> void:
@@ -71,6 +82,15 @@ func set_snapshot(snapshot: Dictionary) -> void:
     relations = snapshot.get("relations", {}).duplicate(true)
     wars = snapshot.get("wars", []).duplicate(true)
     player_country_id = String(snapshot.get("player_country_id", ""))
+    world_map_id = String(snapshot.get("world_map_id", ""))
+    if not world_map_id.is_empty():
+        if world_map == null:
+            world_map = WorldMapDataScript.new()
+            if not world_map.load_default():
+                push_error("Strategic map fell back to legacy geometry: %s" % world_map.error_message)
+                world_map = null
+        if world_map != null:
+            world_map.bind_runtime_provinces(provinces)
     _recalculate_world_rect()
     _rebuild_spatial_index()
     queue_redraw()
@@ -131,7 +151,23 @@ func nudge_camera(delta:Vector2) -> void:
 func _gui_input(event: InputEvent) -> void:
     if input_state == InputState.MODAL_OPEN:
         accept_event(); return
-    if event is InputEventMouseButton:
+    if event is InputEventKey and event.pressed:
+        var key := event as InputEventKey
+        if key.keycode == KEY_F6:
+            debug_map_enabled = not debug_map_enabled
+            queue_redraw(); accept_event()
+        elif key.keycode == KEY_F7:
+            show_coast_highlight = not show_coast_highlight
+            queue_redraw(); accept_event()
+        elif key.keycode == KEY_F8:
+            show_chunk_boundaries = not show_chunk_boundaries
+            queue_redraw(); accept_event()
+        elif key.keycode == KEY_F9:
+            show_region_ids = not show_region_ids
+            queue_redraw(); accept_event()
+        elif key.keycode == KEY_HOME:
+            frame_world(); accept_event()
+    elif event is InputEventMouseButton:
         var button := event as InputEventMouseButton
         if button.button_index == MOUSE_BUTTON_WHEEL_UP and button.pressed:
             _zoom_at(button.position, 1.14); accept_event()
@@ -148,6 +184,9 @@ func _gui_input(event: InputEvent) -> void:
             accept_event()
         elif button.button_index == MOUSE_BUTTON_LEFT:
             if button.pressed:
+                var clicked_city := _city_at(button.position)
+                if not clicked_city.is_empty():
+                    city_selected.emit(clicked_city)
                 var province_id := _province_at(button.position)
                 if button.ctrl_pressed and province_id != -1 and input_state == InputState.IDLE:
                     _command_drag = true; _drag_source_id = province_id; _selection_origin = button.position; _selection_current = button.position
@@ -238,8 +277,22 @@ func _clamp_pan() -> void:
 func _screen_to_world(point: Vector2) -> Vector2:
     return (point - pan) / zoom
 
+func _city_at(screen_point: Vector2) -> String:
+    if world_map == null:
+        return ""
+    var world_position := _screen_to_world(screen_point)
+    for city_value in world_map.cities:
+        if city_value is Dictionary and bool(city_value.get("enabled", true)) and bool(city_value.get("inBounds", false)):
+            var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+            if world_position.distance_to(position) <= 9.0 / zoom:
+                return String(city_value.get("id", ""))
+    return ""
+
 func _province_at(screen_point: Vector2) -> int:
     var world := _screen_to_world(screen_point)
+    if world_map != null:
+        var tile := world_map.tile_at_world(world)
+        return world_map.province_id(tile.x, tile.y)
     var cell := Vector2i(floori(world.x / PICK_BUCKET_SIZE), floori(world.y / PICK_BUCKET_SIZE))
     if not map_tiles.is_empty():
         var tile_candidates: Array = _tile_spatial_buckets.get(cell, [])
@@ -260,7 +313,9 @@ func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, size), Color("#0c1821"))
     draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
     var numeric_range := _robust_range(_numeric_values(map_mode))
-    if map_tiles.is_empty():
+    if world_map != null:
+        _draw_world_map(numeric_range)
+    elif map_tiles.is_empty():
         _draw_grid()
         _draw_province_polygons(numeric_range)
     else:
@@ -275,6 +330,8 @@ func _draw() -> void:
         draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
     if _command_drag:
         draw_dashed_line(_selection_origin, _selection_current, Color("#f0c66b"), 3.0, 10.0, true)
+    if debug_map_enabled and world_map != null:
+        _draw_map_debug_overlay()
 
 func _draw_province_polygons(numeric_range: Vector2) -> void:
     for id_value in provinces.keys():
@@ -295,6 +352,122 @@ func _draw_province_polygons(numeric_range: Vector2) -> void:
         draw_polyline(polygon + PackedVector2Array([polygon[0]]), border, width, true)
         if id in _peace_demands:
             draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 6.0 / zoom, true)
+
+func _draw_world_map(_numeric_range: Vector2) -> void:
+    var world_view := Rect2(_screen_to_world(Vector2.ZERO), size / zoom).grow(world_map.tile_size * 2.0)
+    var chunks := world_map.visible_chunk_bounds(world_view)
+    visible_chunk_count = chunks.size.x * chunks.size.y
+    last_rendered_tile_count = visible_chunk_count * world_map.chunk_size * world_map.chunk_size
+    var chunk_world_size := float(world_map.chunk_size) * world_map.tile_size
+    if zoom < 0.32 and world_map.overview_texture != null:
+        var overview := world_map.overview_texture_for_mode(map_mode, countries, provinces, player_country_id, relations, wars)
+        draw_texture_rect(overview, world_map.world_rect(), false)
+        last_rendered_tile_count = 0
+    else:
+        for chunk_y in range(chunks.position.y, chunks.end.y):
+            for chunk_x in range(chunks.position.x, chunks.end.x):
+                var texture := world_map.chunk_texture(chunk_x, chunk_y, map_mode, countries, provinces, player_country_id, relations, wars)
+                var rect := Rect2(Vector2(float(chunk_x), float(chunk_y)) * chunk_world_size, Vector2.ONE * chunk_world_size)
+                draw_texture_rect(texture, rect, false)
+                if show_chunk_boundaries:
+                    draw_rect(rect, Color(0.95, 0.75, 0.25, 0.72), false, 1.0 / zoom)
+        _draw_world_selection(world_view)
+        if show_coast_highlight:
+            _draw_coast_highlight(world_view)
+    _draw_world_labels()
+    if show_region_ids:
+        _draw_region_ids()
+    _draw_cities()
+
+func _draw_world_selection(world_view: Rect2) -> void:
+    if selected_province_ids.is_empty() and _hovered_id == -1:
+        return
+    var tile_min := world_map.tile_at_world(world_view.position)
+    var tile_max := world_map.tile_at_world(world_view.end)
+    for row in range(maxi(0, tile_min.y), mini(world_map.height - 1, tile_max.y) + 1):
+        for column in range(maxi(0, tile_min.x), mini(world_map.width - 1, tile_max.x) + 1):
+            var province_id := world_map.province_id(column, row)
+            if province_id in selected_province_ids or province_id == _hovered_id:
+                var color := Color(0.96, 0.83, 0.45, 0.43) if province_id in selected_province_ids else Color(0.86, 0.91, 0.92, 0.28)
+                draw_rect(Rect2(Vector2(column, row) * world_map.tile_size, Vector2.ONE * world_map.tile_size), color, false, 1.5 / zoom)
+
+func _draw_coast_highlight(world_view: Rect2) -> void:
+    var tile_min := world_map.tile_at_world(world_view.position)
+    var tile_max := world_map.tile_at_world(world_view.end)
+    for row in range(maxi(0, tile_min.y), mini(world_map.height - 1, tile_max.y) + 1):
+        for column in range(maxi(0, tile_min.x), mini(world_map.width - 1, tile_max.x) + 1):
+            if world_map.terrain_id(column, row) == 3:
+                draw_rect(Rect2(Vector2(column, row) * world_map.tile_size, Vector2.ONE * world_map.tile_size), Color(1.0, 0.3, 0.25, 0.58), false, 1.0 / zoom)
+
+func _draw_world_labels() -> void:
+    if zoom < 0.16:
+        return
+    var labels := [
+        ["중국 대륙", 105.0, 37.0, false], ["한반도", 127.3, 38.2, false],
+        ["일본 열도", 137.8, 37.0, false], ["황해", 123.5, 35.0, true],
+        ["동해", 132.7, 40.0, true], ["동중국해", 125.0, 28.0, true]
+    ]
+    var font := ThemeDB.fallback_font
+    for label in labels:
+        var position := world_map.world_from_lonlat(float(label[1]), float(label[2]))
+        var font_size := clampi(roundi(18.0 / zoom), 6, 128)
+        var text := String(label[0])
+        var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+        var color := Color(0.60, 0.80, 0.88, 0.62) if bool(label[3]) else Color(0.94, 0.88, 0.68, 0.56)
+        draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+func _draw_cities() -> void:
+    var font := ThemeDB.fallback_font
+    for city_value in world_map.cities:
+        if city_value is not Dictionary:
+            continue
+        var city: Dictionary = city_value
+        if not bool(city.get("enabled", true)) or not bool(city.get("inBounds", false)):
+            continue
+        var major := String(city.get("type", "")) == "major_city"
+        if zoom < 0.14 and not major:
+            continue
+        var position := Vector2(float(city.get("mapX", 0.0)), float(city.get("mapY", 0.0))) * world_map.tile_size
+        var radius := (4.0 if major else 2.6) / zoom
+        draw_circle(position, radius, Color("#f4d58a"))
+        draw_arc(position, radius, 0.0, TAU, 12, Color("#1c1e1f"), 1.2 / zoom)
+        if zoom >= 0.52:
+            var city_font_size := clampi(roundi(12.0 / zoom), 2, 28)
+            draw_string(font, position + Vector2(6.0 / zoom, -3.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+
+func _draw_region_ids() -> void:
+    var anchors: Dictionary = world_map.manifest.get("province_anchors", {})
+    for source_id in anchors.keys():
+        var anchor: Dictionary = anchors[source_id]
+        var position := Vector2(float(anchor.get("map_x", 0.0)), float(anchor.get("map_y", 0.0))) * world_map.tile_size
+        draw_string(ThemeDB.fallback_font, position, String(source_id), HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(roundi(10.0 / zoom), 2, 32), Color("#f4d58a"))
+
+func _draw_map_debug_overlay() -> void:
+    var mouse_world := _screen_to_world(get_local_mouse_position())
+    var tile := world_map.tile_at_world(mouse_world)
+    var lonlat := world_map.lonlat_from_world(mouse_world)
+    var terrain_name := world_map.terrain_name(world_map.terrain_id(tile.x, tile.y))
+    var lines := [
+        "MAP DEBUG  F6: panel  F7: coast  F8: chunks  F9: regions  Home: overview",
+        "tile %d,%d  lon %.3f°  lat %.3f°  terrain %s" % [tile.x, tile.y, lonlat.x, lonlat.y, terrain_name],
+        "zoom %.3f  visible chunks %d  detailed tiles <= %d" % [zoom, visible_chunk_count, last_rendered_tile_count]
+    ]
+    draw_rect(Rect2(12, 12, 610, 72), Color(0.02, 0.04, 0.06, 0.88), true)
+    for index in range(lines.size()):
+        draw_string(ThemeDB.fallback_font, Vector2(22, 33 + index * 20), lines[index], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#d9e4e6"))
+
+func go_to_lonlat(longitude: float, latitude: float, target_zoom := 1.2) -> void:
+    if world_map == null:
+        return
+    zoom = clampf(target_zoom, min_zoom, max_zoom)
+    pan = size * 0.5 - world_map.world_from_lonlat(longitude, latitude) * zoom
+    _clamp_pan()
+    queue_redraw()
+
+func export_world_map_png(path := "user://east_asia_world_map.png") -> Error:
+    if world_map == null or world_map.overview_texture == null:
+        return ERR_UNAVAILABLE
+    return world_map.overview_texture.get_image().save_png(path)
 
 func _draw_hex_tiles(numeric_range: Vector2) -> void:
     for tile_value in map_tiles:
@@ -546,6 +719,9 @@ func _add_polygon_to_buckets(buckets: Dictionary, value: int, polygon: PackedVec
             buckets[cell].append(value)
 
 func _recalculate_world_rect() -> void:
+    if world_map != null:
+        _world_rect = world_map.world_rect()
+        return
     var first := true
     if not map_tiles.is_empty():
         for tile_value in map_tiles:

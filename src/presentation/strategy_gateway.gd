@@ -2,7 +2,6 @@ class_name StrategyGateway
 extends RefCounted
 
 const GameSession = preload("res://src/core/game_session.gd")
-const EastAsiaHexLayout = preload("res://src/map/east_asia_hex_layout.gd")
 const CORE_SCENARIO := "res://data/scenarios/prototype_east_asia.json"
 const AUTOSAVE_PATH := "user://autosave.json"
 
@@ -19,10 +18,12 @@ var _snapshot: Dictionary = {}
 var _scenarios: Array[Dictionary] = []
 var _commands: Array[Dictionary] = []
 var _visual_geometry: Dictionary = {}
+var _world_map_manifest: Dictionary = {}
 var _next_command_id := 1
 
 func load_local_catalog() -> bool:
     _load_visual_geometry()
+    _world_map_manifest = _load_json("res://data/maps/generated/east_asia_world_map_manifest.json")
     var scenario_data = _load_json(CORE_SCENARIO)
     if scenario_data is Dictionary:
         _scenarios = [scenario_data.duplicate(true)]
@@ -253,16 +254,21 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
         result.provinces[id] = province_item
         result.armies[id] = 0
     if String(core.get("scenario_id", "")) == "prototype_east_asia":
-        var layout: Dictionary = EastAsiaHexLayout.build(result.provinces)
-        result.map_tiles = layout.get("tiles", [])
-        result.map_labels = layout.get("labels", [])
+        result.world_map_id = String(_world_map_manifest.get("map_id", "east_asia_640x480"))
+        var anchors: Dictionary = _world_map_manifest.get("province_anchors", {})
+        var tile_size := float(_world_map_manifest.get("tile_size", 8.0))
         for province_id_value in result.provinces.keys():
             var province_id := int(province_id_value)
-            if layout.get("province_centers", {}).has(province_id):
-                var center: Vector2 = layout.province_centers[province_id]
-                result.provinces[province_id]["map_center"] = [center.x, center.y]
-            if layout.get("province_polygons", {}).has(province_id):
-                result.provinces[province_id]["polygon"] = layout.province_polygons[province_id].duplicate(true)
+            var source_id := String(result.provinces[province_id].get("source_province_id", ""))
+            if not anchors.has(source_id):
+                continue
+            var anchor: Dictionary = anchors[source_id]
+            var center := Vector2(float(anchor.get("map_x", 0.0)), float(anchor.get("map_y", 0.0))) * tile_size
+            result.provinces[province_id]["map_center"] = [center.x, center.y]
+            result.provinces[province_id]["polygon"] = [
+                [center.x - tile_size, center.y - tile_size], [center.x + tile_size, center.y - tile_size],
+                [center.x + tile_size, center.y + tile_size], [center.x - tile_size, center.y + tile_size]
+            ]
     for army in core.get("armies", {}).values():
         var province_id := int(army.get("province_id", -1))
         result.armies[province_id] = int(result.armies.get(province_id, 0)) + int(army.get("soldiers", 0))
