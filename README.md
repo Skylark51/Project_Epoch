@@ -44,6 +44,7 @@ src/core/            명령·턴·세이브의 기존 코어
 src/systems/         경제·군사·통치·반란·협상 시스템
 src/governance/      GovernanceSession 통합 파사드
 src/ui/              메인 씬에 조립되는 통치 대시보드 UI
+src/input/           전역 지도 키보드·가장자리 이동 입력 라우터
 src/map/             전략 지도 렌더링과 입력
 src/presentation/    UI와 게임 코어 사이의 어댑터
 src/main.gd          기존 전략 화면 조립과 플레이 흐름
@@ -159,10 +160,23 @@ Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/m
 
 메인 런타임 테스트는 기준 메인 씬 로드, GovernanceSession 생성, 3개 국가·9개 프로빈스·5개 정치집단 등록, 이름 있는 통치자, 핵심 지점, 대시보드 열기, 코어·통치 턴 동기화, 통합 자동 저장·복원, 새 게임의 저장 상태 격리를 검증합니다.
 
+전역 UI·입력·알림 테스트:
+
+```powershell
+Godot_v4.6.3-stable_win64_console.exe --headless --path . --script res://tests/ui_shell_input_notifications_test_runner.gd
+```
+
+게임 화면의 `⚙`에서 상단 정보 항목, 상세·간략 표시, 가장자리 이동과 알림 출력
+방식을 설정할 수 있습니다. 휠은 연속 줌, 상단의 전략·지역·근접 버튼은 의미상
+확대 단계 전환, 방향키와 WASD는 지도 이동입니다. 도시를 선택한 동안 좌우
+방향키는 현재 도시 정렬 순서로 순환합니다. 기존 공격 준비 단축키는 WASD의
+`A`와 겹치지 않도록 `Shift+A`입니다.
+
 ## 설계 문서
 
 - `docs/design/GOVERNANCE_REBELLION_IMPLEMENTATION.md`
 - `docs/design/역사의시대2_게임설계_통합위키.txt`
+- `docs/ui/UI_SHELL_INPUT_NOTIFICATIONS.md`
 
 ## 다음 개발 단계
 
