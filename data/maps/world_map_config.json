@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "map_id": "east_asia_640x480",
+  "width": 640,
+  "height": 480,
+  "chunk_size": 16,
+  "tile_size": 8,
+  "supersampling": 4,
+  "bounds": {
+    "west": 73.0,
+    "east": 150.0,
+    "south": 15.0,
+    "north": 55.0
+  },
+  "projection": {
+    "type": "lambert_conformal_conic",
+    "central_meridian": 111.5,
+    "latitude_of_origin": 35.0,
+    "standard_parallel_1": 25.0,
+    "standard_parallel_2": 47.0
+  },
+  "sources": {
+    "land": "res://data/geography/ne_10m_land.geojson",
+    "lakes": "res://data/geography/ne_10m_lakes.geojson"
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "data_version": "east_asia_map_v1",
+  "map_id": "east_asia_640x480",
+  "width": 640,
+  "height": 480,
+  "tile_count": 307200,
+  "chunk_size": 16,
+  "chunk_columns": 40,
+  "chunk_rows": 30,
+  "chunk_count": 1200,
+  "tile_size": 8,
+  "projection": {
+    "type": "lambert_conformal_conic",
+    "central_meridian": 111.5,
+    "latitude_of_origin": 35.0,
+    "standard_parallel_1": 25.0,
+    "standard_parallel_2": 47.0,
+    "projected_bounds": {
+      "min_x": -0.662073539031267,
+      "max_x": 0.6620735390312673,
+      "min_y": -0.35075826732064863,
+      "max_y": 0.42774535050911056
+    }
+  },
+  "bounds": {
+    "west": 73.0,
+    "east": 150.0,
+    "south": 15.0,
+    "north": 55.0
+  },
+  "terrain_ids": {
+    "deep_ocean": 0,
+    "ocean": 1,
+    "shallow_sea": 2,
+    "coast": 3,
+    "plains": 4,
+    "grassland": 5,
+    "forest": 6,
+    "hill": 7,
+    "mountain": 8,
+    "desert": 9,
+    "steppe": 10,
+    "wetland": 11,
+    "river": 12,
+    "lake": 13
+  },
+  "terrain_counts": {
+    "deep_ocean": 88805,
+    "ocean": 20410,
+    "shallow_sea": 12924,
+    "coast": 3927,
+    "plains": 9059,
+    "grassland": 23512,
+    "forest": 10928,
+    "hill": 21516,
+    "mountain": 47612,
+    "desert": 54223,
+    "steppe": 12550,
+    "wetland": 0,
+    "river": 0,
+    "lake": 1734
+  },
+  "terrain_file": "res://data/maps/generated/east_asia_terrain.bin",
+  "province_file": "res://data/maps/generated/east_asia_provinces.bin",
+  "overview_file": "res://data/maps/generated/east_asia_overview.png",
+  "cities_file": "res://data/maps/cities.json",
+  "province_sources": [
+    "",
+    "guknae_basin",
+    "pyongyang_basin",
+    "han_river_basin",
+    "yeongsan_basin",
+    "daegaya_basin",
+    "gyeongju_basin",
+    "aragaya_basin",
+    "guya_basin",
+    "liaodong_corridor",
+    "qingzhou_corridor",
+    "tsukushi_plain",
+    "kibi_plain",
+    "yamato_basin"
+  ],
+  "province_anchors": {
+    "guknae_basin": {
+      "longitude": 126.18,
+      "latitude": 41.14,
+      "map_x": 411.53309960857734,
+      "map_y": 189.94823981812837
+    },
+    "pyongyang_basin": {
+      "longitude": 125.76,
+      "latitude": 39.04,
+      "map_x": 411.48999539699116,
+      "map_y": 212.44088807588133
+    },
+    "han_river_basin": {
+      "longitude": 126.98,
+      "latitude": 37.57,
+      "map_x": 421.19139797266604,
+      "map_y": 226.24866023119012
+    },
+    "yeongsan_basin": {
+      "longitude": 126.7,
+      "latitude": 35.02,
+      "map_x": 422.6760976074539,
+      "map_y": 253.2253259913517
+    },
+    "daegaya_basin": {
+      "longitude": 128.27,
+      "latitude": 35.73,
+      "map_x": 432.1675111973043,
+      "map_y": 243.60532334433
+    },
+    "gyeongju_basin": {
+      "longitude": 129.22,
+      "latitude": 35.86,
+      "map_x": 438.2567454253889,
+      "map_y": 240.8124233131278
+    },
+    "aragaya_basin": {
+      "longitude": 128.41,
+      "latitude": 35.27,
+      "map_x": 433.75601467085016,
+      "map_y": 248.18323474117182
+    },
+    "guya_basin": {
+      "longitude": 128.88,
+      "latitude": 35.23,
+      "map_x": 436.9433564124478,
+      "map_y": 247.88528170114657
+    },
+    "liaodong_corridor": {
+      "longitude": 123.2,
+      "latitude": 41.27,
+      "map_x": 392.92399429910836,
+      "map_y": 191.80954997114998
+    },
+    "qingzhou_corridor": {
+      "longitude": 118.48,
+      "latitude": 36.7,
+      "map_x": 366.30147346569845,
+      "map_y": 243.64679031186557
+    },
+    "tsukushi_plain": {
+      "longitude": 130.4,
+      "latitude": 33.59,
+      "map_x": 449.68023887182284,
+      "map_y": 262.44731209933406
+    },
+    "kibi_plain": {
+      "longitude": 133.93,
+      "latitude": 34.66,
+      "map_x": 471.46679749574906,
+      "map_y": 244.85612959590526
+    },
+    "yamato_basin": {
+      "longitude": 135.8,
+      "latitude": 34.5,
+      "map_x": 484.1681882726042,
+      "map_y": 242.61159158680078
+    }
+  },
+  "minimum_islands_added": [
+    {
+      "id": "dokdo",
+      "longitude": 131.87,
+      "latitude": 37.24,
+      "x": 453,
+      "y": 222
+    }
+  ],
+  "source_sha256": {
+    "ne_10m_land.geojson": "1ac90796408bc6ad6911d69448485d3c4dbf2190370080368a09976e1c9f7416",
+    "ne_10m_lakes.geojson": "2d036f53dedec578001c5c30c2959ee7d4eebc1306900fa4367c49929ec8f2d9"
+  }
+}
