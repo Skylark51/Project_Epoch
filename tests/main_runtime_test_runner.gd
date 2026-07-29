@@ -48,6 +48,30 @@ func _run() -> void:
     _expect(governance_snapshot.get("political_groups", {}).get("goguryeo", {}).size() == 5, "기본 정치 집단 5개가 등록되어야 한다.")
     _expect(String(gateway.snapshot().get("scenario_id", "")) == "prototype_east_asia", "F5 런타임이 동아시아 시나리오를 사용해야 한다.")
     _expect(String(gateway.country("goguryeo").get("name", "")) == "고구려", "국가 선택에 고구려가 노출되어야 한다.")
+    var map_tiles: Array = gateway.snapshot().get("map_tiles", [])
+    var land_tiles := 0
+    var water_tiles := 0
+    var coastal_water_tiles := 0
+    var covered_provinces := {}
+    var all_hexagons := true
+    for tile_value in map_tiles:
+        if tile_value is not Dictionary:
+            all_hexagons = false
+            continue
+        var tile: Dictionary = tile_value
+        all_hexagons = all_hexagons and tile.get("polygon", []).size() == 6
+        if bool(tile.get("water", false)):
+            water_tiles += 1
+            if String(tile.get("terrain", "")) == "coastal_water":
+                coastal_water_tiles += 1
+        else:
+            land_tiles += 1
+            covered_provinces[int(tile.get("province_id", -1))] = true
+    _expect(map_tiles.size() == 28 * 18, "동아시아 지도가 빈칸 없는 28×18 연속 타일 필드여야 한다.")
+    _expect(all_hexagons, "모든 지도 타일은 육각형이어야 한다.")
+    _expect(land_tiles >= 150 and water_tiles >= 150, "동아시아 지도에 충분한 육지와 바다 타일이 함께 있어야 한다.")
+    _expect(coastal_water_tiles >= 20, "육지 주변에 해안 바다 타일이 형성되어야 한다.")
+    _expect(covered_provinces.size() == 13, "13개 프로빈스가 모두 하나 이상의 육지 타일을 가져야 한다.")
     _expect(String(gateway.province(1).get("source_province_id", "")) == "guknae_basin", "전략 지도가 동아시아 프로빈스 원본 ID를 유지해야 한다.")
     _expect(gateway.province(1).get("polygon", []).size() == 6, "전략 지도가 동아시아 전용 프로빈스 좌표를 사용해야 한다.")
     var province: Dictionary = governance_snapshot.get("provinces", {}).get("1", {})

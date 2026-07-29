@@ -15,9 +15,14 @@ const MODE_LABELS := {
     "population": "인구", "development": "개발도", "manpower": "인력", "stability": "안정도",
     "revolt": "반란 위험", "terrain": "지형", "fort": "요새", "supply": "보급"
 }
-const TERRAIN_COLORS := {"plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"), "coast": Color("#58788a")}
+const TERRAIN_COLORS := {
+    "plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"),
+    "coast": Color("#58788a"), "coastal_water": Color("#1d4b60"), "deep_water": Color("#102f42")
+}
 
 var provinces: Dictionary = {}
+var map_tiles: Array = []
+var map_labels: Array = []
 var countries: Dictionary = {}
 var armies: Dictionary = {}
 var relations: Dictionary = {}
@@ -48,6 +53,7 @@ var _command_paths: Array[Dictionary] = []
 var _peace_demands: Array[int] = []
 var _world_rect := Rect2(0, 0, 800, 560)
 var _spatial_buckets: Dictionary = {}
+var _tile_spatial_buckets: Dictionary = {}
 const PICK_BUCKET_SIZE := 160.0
 
 func _ready() -> void:
@@ -58,6 +64,8 @@ func _ready() -> void:
 
 func set_snapshot(snapshot: Dictionary) -> void:
     provinces = snapshot.get("provinces", {}).duplicate(true)
+    map_tiles = snapshot.get("map_tiles", []).duplicate(true)
+    map_labels = snapshot.get("map_labels", []).duplicate(true)
     countries = snapshot.get("countries", {}).duplicate(true)
     armies = snapshot.get("armies", {}).duplicate(true)
     relations = snapshot.get("relations", {}).duplicate(true)
@@ -233,6 +241,14 @@ func _screen_to_world(point: Vector2) -> Vector2:
 func _province_at(screen_point: Vector2) -> int:
     var world := _screen_to_world(screen_point)
     var cell := Vector2i(floori(world.x / PICK_BUCKET_SIZE), floori(world.y / PICK_BUCKET_SIZE))
+    if not map_tiles.is_empty():
+        var tile_candidates: Array = _tile_spatial_buckets.get(cell, [])
+        for tile_index_value in tile_candidates:
+            var tile: Dictionary = map_tiles[int(tile_index_value)]
+            var tile_polygon := _tile_polygon(tile)
+            if tile_polygon.size() >= 3 and Geometry2D.is_point_in_polygon(world, tile_polygon):
+                return -1 if bool(tile.get("water", false)) else int(tile.get("province_id", -1))
+        return -1
     var candidates: Array = _spatial_buckets.get(cell, provinces.keys())
     for id_value in candidates:
         var id := int(id_value)
@@ -240,20 +256,34 @@ func _province_at(screen_point: Vector2) -> int:
         if polygon.size() >= 3 and Geometry2D.is_point_in_polygon(world, polygon):
             return id
     return -1
-
 func _draw() -> void:
-    draw_rect(Rect2(Vector2.ZERO, size), Color("#111a22"))
+    draw_rect(Rect2(Vector2.ZERO, size), Color("#0c1821"))
     draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
-    _draw_grid()
     var numeric_range := _robust_range(_numeric_values(map_mode))
+    if map_tiles.is_empty():
+        _draw_grid()
+        _draw_province_polygons(numeric_range)
+    else:
+        _draw_hex_tiles(numeric_range)
+        _draw_region_labels()
+    _draw_command_paths()
+    _draw_icons_and_labels()
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    if _selection_dragging:
+        var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
+        draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
+        draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
+    if _command_drag:
+        draw_dashed_line(_selection_origin, _selection_current, Color("#f0c66b"), 3.0, 10.0, true)
+
+func _draw_province_polygons(numeric_range: Vector2) -> void:
     for id_value in provinces.keys():
         var id := int(id_value)
         var province: Dictionary = provinces[id]
         var polygon := _polygon_for(province)
         if polygon.size() < 3:
             continue
-        var fill := _province_color(province, numeric_range)
-        draw_colored_polygon(polygon, fill)
+        draw_colored_polygon(polygon, _province_color(province, numeric_range))
         var border := _border_color(province)
         var width := 1.4 / zoom
         if id in selected_province_ids or id == selected_province_id:
@@ -265,15 +295,63 @@ func _draw() -> void:
         draw_polyline(polygon + PackedVector2Array([polygon[0]]), border, width, true)
         if id in _peace_demands:
             draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 6.0 / zoom, true)
-    _draw_command_paths()
-    _draw_icons_and_labels()
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-    if _selection_dragging:
-        var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
-        draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
-        draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
-    if _command_drag:
-        draw_dashed_line(_selection_origin, _selection_current, Color("#f0c66b"), 3.0, 10.0, true)
+
+func _draw_hex_tiles(numeric_range: Vector2) -> void:
+    for tile_value in map_tiles:
+        if tile_value is not Dictionary:
+            continue
+        var tile: Dictionary = tile_value
+        var polygon := _tile_polygon(tile)
+        if polygon.size() < 3:
+            continue
+        var is_water := bool(tile.get("water", false))
+        var province_id := int(tile.get("province_id", -1))
+        var fill: Color = TERRAIN_COLORS.get(String(tile.get("terrain", "deep_water")), Color("#102f42")) if is_water else _tile_land_color(tile, provinces.get(province_id, {}), numeric_range)
+        var variation := int((int(tile.get("column", 0)) + int(tile.get("row", 0)) * 3) % 5) - 2
+        fill = fill.lightened(float(variation) * 0.018) if variation > 0 else fill.darkened(float(-variation) * 0.018)
+        draw_colored_polygon(polygon, fill)
+        var border := Color("#285568") if is_water else Color(0.08, 0.11, 0.12, 0.58)
+        var width := 0.65 / zoom
+        if not is_water and bool(tile.get("boundary", false)):
+            border = Color("#1b2224")
+            width = 1.35 / zoom
+        if not is_water and (province_id in selected_province_ids or province_id == selected_province_id):
+            border = Color("#f4d58a")
+            width = 2.5 / zoom
+        elif not is_water and province_id == _hovered_id:
+            border = Color("#d9e4e6")
+            width = 1.9 / zoom
+        draw_polyline(polygon + PackedVector2Array([polygon[0]]), border, width, true)
+        if not is_water and province_id in _peace_demands:
+            draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 3.2 / zoom, true)
+
+func _tile_land_color(tile: Dictionary, province: Dictionary, numeric_range: Vector2) -> Color:
+    if map_mode == "terrain":
+        return TERRAIN_COLORS.get(String(tile.get("terrain", province.get("terrain", "plains"))), Color("#6c735f"))
+    var color := _province_color(province, numeric_range)
+    if bool(tile.get("coastal", false)):
+        color = color.lerp(Color("#527787"), 0.08)
+    return color
+
+func _draw_region_labels() -> void:
+    if zoom < 0.5:
+        return
+    var font := ThemeDB.fallback_font
+    for label_value in map_labels:
+        if label_value is not Dictionary:
+            continue
+        var label: Dictionary = label_value
+        var position_value = label.get("position", Vector2.ZERO)
+        var position := Vector2.ZERO
+        if position_value is Vector2:
+            position = position_value
+        elif position_value is Array and position_value.size() >= 2:
+            position = Vector2(float(position_value[0]), float(position_value[1]))
+        var text := String(label.get("text", ""))
+        var font_size := 19
+        var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+        var color := Color(0.56, 0.76, 0.84, 0.55) if String(label.get("kind", "")) == "sea" else Color(0.91, 0.85, 0.69, 0.30)
+        draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 func _draw_grid() -> void:
     var start_x := int(floor(_world_rect.position.x / 80.0)) * 80
@@ -416,7 +494,20 @@ func _polygon_for(province: Dictionary) -> PackedVector2Array:
             result.append(point)
     return result
 
+func _tile_polygon(tile: Dictionary) -> PackedVector2Array:
+    var result := PackedVector2Array()
+    for point in tile.get("polygon", []):
+        if point is Array and point.size() >= 2:
+            result.append(Vector2(float(point[0]), float(point[1])))
+        elif point is Vector2:
+            result.append(point)
+    return result
 func _province_center(province: Dictionary) -> Vector2:
+    var center_value = province.get("map_center", [])
+    if center_value is Array and center_value.size() >= 2:
+        return Vector2(float(center_value[0]), float(center_value[1]))
+    if center_value is Vector2:
+        return center_value
     var polygon := _polygon_for(province)
     if polygon.is_empty(): return Vector2.ZERO
     var total := Vector2.ZERO
@@ -425,24 +516,49 @@ func _province_center(province: Dictionary) -> Vector2:
 
 func _rebuild_spatial_index() -> void:
     _spatial_buckets.clear()
+    _tile_spatial_buckets.clear()
     for id_value in provinces.keys():
         var id := int(id_value)
         var polygon := _polygon_for(provinces[id])
         if polygon.is_empty():
             continue
-        var bounds := Rect2(polygon[0], Vector2.ZERO)
-        for point in polygon:
-            bounds = bounds.expand(point)
-        var min_cell := Vector2i(floori(bounds.position.x / PICK_BUCKET_SIZE), floori(bounds.position.y / PICK_BUCKET_SIZE))
-        var max_cell := Vector2i(floori(bounds.end.x / PICK_BUCKET_SIZE), floori(bounds.end.y / PICK_BUCKET_SIZE))
-        for x in range(min_cell.x, max_cell.x + 1):
-            for y in range(min_cell.y, max_cell.y + 1):
-                var cell := Vector2i(x, y)
-                if not _spatial_buckets.has(cell):
-                    _spatial_buckets[cell] = []
-                _spatial_buckets[cell].append(id)
+        _add_polygon_to_buckets(_spatial_buckets, id, polygon)
+    for tile_index in range(map_tiles.size()):
+        var tile_value = map_tiles[tile_index]
+        if tile_value is not Dictionary:
+            continue
+        var polygon := _tile_polygon(tile_value)
+        if polygon.is_empty():
+            continue
+        _add_polygon_to_buckets(_tile_spatial_buckets, tile_index, polygon)
+
+func _add_polygon_to_buckets(buckets: Dictionary, value: int, polygon: PackedVector2Array) -> void:
+    var bounds := Rect2(polygon[0], Vector2.ZERO)
+    for point in polygon:
+        bounds = bounds.expand(point)
+    var min_cell := Vector2i(floori(bounds.position.x / PICK_BUCKET_SIZE), floori(bounds.position.y / PICK_BUCKET_SIZE))
+    var max_cell := Vector2i(floori(bounds.end.x / PICK_BUCKET_SIZE), floori(bounds.end.y / PICK_BUCKET_SIZE))
+    for x in range(min_cell.x, max_cell.x + 1):
+        for y in range(min_cell.y, max_cell.y + 1):
+            var cell := Vector2i(x, y)
+            if not buckets.has(cell):
+                buckets[cell] = []
+            buckets[cell].append(value)
+
 func _recalculate_world_rect() -> void:
     var first := true
+    if not map_tiles.is_empty():
+        for tile_value in map_tiles:
+            if tile_value is not Dictionary:
+                continue
+            for point in _tile_polygon(tile_value):
+                if first:
+                    _world_rect = Rect2(point, Vector2.ZERO)
+                    first = false
+                else:
+                    _world_rect = _world_rect.expand(point)
+        if not first:
+            return
     for province in provinces.values():
         for point in _polygon_for(province):
             if first:
@@ -450,8 +566,8 @@ func _recalculate_world_rect() -> void:
                 first = false
             else:
                 _world_rect = _world_rect.expand(point)
-    if first: _world_rect = Rect2(0, 0, 800, 560)
-
+    if first:
+        _world_rect = Rect2(0, 0, 800, 560)
 func _pair_key(a: String, b: String) -> String:
     return a + "|" + b if a < b else b + "|" + a
 

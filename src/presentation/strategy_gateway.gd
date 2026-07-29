@@ -2,6 +2,7 @@ class_name StrategyGateway
 extends RefCounted
 
 const GameSession = preload("res://src/core/game_session.gd")
+const EastAsiaHexLayout = preload("res://src/map/east_asia_hex_layout.gd")
 const CORE_SCENARIO := "res://data/scenarios/prototype_east_asia.json"
 const AUTOSAVE_PATH := "user://autosave.json"
 
@@ -229,7 +230,8 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
     var result := {
         "countries": {}, "provinces": {}, "armies": {}, "relations": core.get("relations", {}).duplicate(true),
         "wars": [], "scenario_id": String(core.get("scenario_id", "")), "player_country_id": String(core.get("player_country_id", "")),
-        "date": core.get("date", {}).duplicate(true), "turn": int(core.get("turn", 1))
+        "date": core.get("date", {}).duplicate(true), "turn": int(core.get("turn", 1)),
+        "map_tiles": [], "map_labels": []
     }
     for id_value in core.get("countries", {}).keys():
         var id := String(id_value)
@@ -250,6 +252,17 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
         province_item["polygon"] = source.get("polygon", _visual_geometry.get(id, _fallback_polygon(id))).duplicate(true)
         result.provinces[id] = province_item
         result.armies[id] = 0
+    if String(core.get("scenario_id", "")) == "prototype_east_asia":
+        var layout: Dictionary = EastAsiaHexLayout.build(result.provinces)
+        result.map_tiles = layout.get("tiles", [])
+        result.map_labels = layout.get("labels", [])
+        for province_id_value in result.provinces.keys():
+            var province_id := int(province_id_value)
+            if layout.get("province_centers", {}).has(province_id):
+                var center: Vector2 = layout.province_centers[province_id]
+                result.provinces[province_id]["map_center"] = [center.x, center.y]
+            if layout.get("province_polygons", {}).has(province_id):
+                result.provinces[province_id]["polygon"] = layout.province_polygons[province_id].duplicate(true)
     for army in core.get("armies", {}).values():
         var province_id := int(army.get("province_id", -1))
         result.armies[province_id] = int(result.armies.get(province_id, 0)) + int(army.get("soldiers", 0))
