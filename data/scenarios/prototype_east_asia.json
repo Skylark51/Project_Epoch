@@ -1,0 +1,30 @@
+{
+  "scenario_id": "prototype_east_asia",
+  "name": "고대 동아시아 기반 시나리오",
+  "schema_version": 1,
+  "prototype": true,
+  "start_year": null,
+  "start_period": "undetermined_ancient_east_asia",
+  "needs_review": ["start_year", "faction_placement_by_period", "capital_sequence_by_period", "religion_labels_by_period"],
+  "data_files": {
+    "regions": "res://data/world/east_asia_regions.json",
+    "countries": "res://data/countries/prototype_east_asia_countries.json",
+    "provinces": "res://data/provinces/prototype_east_asia_provinces.json",
+    "characters": "res://data/characters/prototype_east_asia_characters.json",
+    "political_groups": "res://data/governance/prototype_east_asia_groups.json",
+    "government_types": "res://data/governance/government_profiles.json",
+    "rebellion_rules": "res://data/governance/east_asia_rebellion_rules.json",
+    "state_identity_candidates": "res://data/history/state_identity_candidates.json"
+  },
+  "scenario_rules": {
+    "turns_per_year": 4,
+    "province_strategic_point_min": 5,
+    "province_strategic_point_max": 8,
+    "military_control_separate_from_ownership": true,
+    "government_change_requires_reform": true,
+    "coalition_rebellions_create_separate_factions": true,
+    "rebel_occupation_is_not_statehood": true
+  },
+  "playable_country_ids": ["goguryeo","baekje","silla","geumgwan_gaya","daegaya","ara_gaya","liaodong_lordship","northern_china_frontier","yamato","tsukushi_confederacy","kibi_league"],
+  "candidate_country_ids": ["buyeo_remnant","malgal_confederacy","izumo_league"]
+}
