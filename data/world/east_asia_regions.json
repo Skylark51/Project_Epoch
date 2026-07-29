@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "prototype": true,
+  "start_year": null,
+  "needs_review": ["scenario_start_year", "subregion_boundaries"],
+  "regions": [
+    {"region_id":"korean_peninsula","name":"한반도","parent_region_id":"","subregions":["northern_korea","central_korea","southwest_korea","southeast_korea","nakdong_basin"],"province_ids":[],"historicity":"candidate"},
+    {"region_id":"northeast_asia_link","name":"동북아시아 연결권","parent_region_id":"","subregions":["liaodong","shandong_link"],"province_ids":[],"historicity":"prototype"},
+    {"region_id":"japanese_archipelago","name":"일본 열도 서부","parent_region_id":"","subregions":["northern_kyushu","western_honshu","yamato_region"],"province_ids":[],"historicity":"prototype"},
+    {"region_id":"northern_korea","name":"한반도 북부","parent_region_id":"korean_peninsula","subregions":[],"province_ids":["guknae_basin","pyongyang_basin"],"historicity":"candidate","needs_review":["scenario_owner_by_period"]},
+    {"region_id":"central_korea","name":"한반도 중부","parent_region_id":"korean_peninsula","subregions":[],"province_ids":["han_river_basin"],"historicity":"candidate","needs_review":["hanseong_extent_by_period"]},
+    {"region_id":"southwest_korea","name":"한반도 남서부","parent_region_id":"korean_peninsula","subregions":[],"province_ids":["yeongsan_basin"],"historicity":"candidate"},
+    {"region_id":"southeast_korea","name":"한반도 남동부","parent_region_id":"korean_peninsula","subregions":[],"province_ids":["gyeongju_basin"],"historicity":"candidate"},
+    {"region_id":"nakdong_basin","name":"낙동강 유역","parent_region_id":"korean_peninsula","subregions":[],"province_ids":["guya_basin","daegaya_basin","aragaya_basin"],"historicity":"candidate","needs_review":["gaya_polity_boundaries"]},
+    {"region_id":"liaodong","name":"요동","parent_region_id":"northeast_asia_link","subregions":[],"province_ids":["liaodong_corridor"],"historicity":"candidate","needs_review":["scenario_owner_by_period"]},
+    {"region_id":"shandong_link","name":"산동·동북 중국 연결 지역","parent_region_id":"northeast_asia_link","subregions":[],"province_ids":["qingzhou_corridor"],"historicity":"prototype","needs_review":["playable_map_western_boundary"]},
+    {"region_id":"northern_kyushu","name":"규슈 북부","parent_region_id":"japanese_archipelago","subregions":[],"province_ids":["tsukushi_plain"],"historicity":"candidate","needs_review":["polity_name_by_period"]},
+    {"region_id":"western_honshu","name":"혼슈 서부","parent_region_id":"japanese_archipelago","subregions":[],"province_ids":["kibi_plain"],"historicity":"candidate","needs_review":["kibi_extent_by_period"]},
+    {"region_id":"yamato_region","name":"야마토 지역","parent_region_id":"japanese_archipelago","subregions":[],"province_ids":["yamato_basin"],"historicity":"candidate","needs_review":["capital_sequence_by_period"]}
+  ]
+}

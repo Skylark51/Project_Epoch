@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "prototype": true,
+  "coalition_rebellion": {
+    "minimum_discontent_groups": 2,
+    "discontent_satisfaction_max": 39,
+    "minimum_strong_groups": 1,
+    "strong_influence_min": 60,
+    "required_shared_causes": 1,
+    "required_crises_any": ["capital_control_weak","central_army_absent","major_defeat","succession_crisis","famine","epidemic","major_disaster","foreign_war"],
+    "asset_categories": {
+      "base": ["secured_province","secured_fortress"],
+      "forces": ["private_army","mobilized_troops"],
+      "network": ["secret_network","foreign_backing"]
+    },
+    "minimum_asset_categories": 1,
+    "minimum_combined_mobilization": 80,
+    "compatibility_required": true
+  },
+  "rebellion_factions": [
+    {"group_type":"aristocracy","name":"귀족 반란군","default_goal":"restore_privileges","movement_type":"aristocratic_revolt"},
+    {"group_type":"military","name":"군부 반란군","default_goal":"seize_command","movement_type":"military_junta"},
+    {"group_type":"bureaucracy","name":"관료 반대파","default_goal":"restore_old_order","movement_type":"bureaucratic_opposition"},
+    {"group_type":"religious_estate","name":"종교 반란군","default_goal":"restore_religious_policy","movement_type":"religious_revolt"},
+    {"group_type":"local_populace","name":"지방민 반란군","default_goal":"tax_and_corvee_relief","movement_type":"popular_revolt"}
+  ],
+  "statehood_requirements": {
+    "minimum_provinces":2,
+    "minimum_population":25000,
+    "minimum_survival_turns":4,
+    "minimum_troops":1500,
+    "minimum_food":1200,
+    "minimum_support_value":55,
+    "requires_named_leader":true,
+    "requires_core_city_or_fortress":true,
+    "requires_legitimacy_claim":true,
+    "requires_tax_capacity":true
+  }
+}
