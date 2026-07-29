@@ -52,9 +52,9 @@ func _run() -> void:
     check(map.input_state==StrategicMap.InputState.CHOOSING_MOVE_TARGET,"panning restores pending command input state")
     map.clear_interaction()
     for mode in StrategicMap.MODE_LABELS.keys(): map.set_mode(String(mode)); check(map.map_mode==String(mode),"map mode switches: "+String(mode))
-    map.set_selected_provinces([1,2,3]); await process_frame
-    check(app.selected_provinces.size()==3,"multi-selection propagates to Province management UI")
-    app._simple_command("develop"); check(app.gateway.commands().size()==3,"one-click Province management queues a batch task")
+    map.set_selected_provinces([1,2]); await process_frame
+    check(app.selected_provinces.size()==2,"multi-selection propagates to Province management UI")
+    app._simple_command("develop"); check(app.gateway.commands().size()==2,"one-click Province management queues a batch task")
     app.gateway.clear_commands()
     app._quick_drag_move(1,2); check(app.gateway.commands().size()==1,"drag-and-drop creates a movement task")
     app.gateway.clear_commands()
@@ -71,11 +71,11 @@ func _run() -> void:
         app._cancel_queued(int(move_command.id))
         check(app.gateway.commands().size()==1,"command cancellation updates queue")
     app.selected_province=4; app._open_diplomacy(); check(app.diplomacy_dialog.visible,"diplomacy panel opens for foreign country"); app.diplomacy_dialog.hide()
-    app._queue_diplomacy("declare_war","BOR",50,15); check(app.gateway.commands().size()==2,"diplomacy command enters queue")
+    app._queue_diplomacy("declare_war","baekje",50,15); check(app.gateway.commands().size()==2,"diplomacy command enters queue")
     app._open_peace(); check(app.peace_dialog.visible,"peace negotiation panel opens"); app._close_peace()
     app.gateway.submit_turn(); await process_frame
     check(int(app.gateway.snapshot().get("turn",1))==2,"core advances the turn and refreshes the UI snapshot")
-    check(app.gateway.at_war("AUR","BOR"),"queued war declaration changes core diplomacy state")
+    check(app.gateway.at_war("goguryeo","baekje"),"queued war declaration changes core diplomacy state")
     var saved_turn:=int(app.gateway.snapshot().get("turn",0))
     check(app.gateway.load_autosave(),"core autosave can be loaded from the start-screen flow")
     check(int(app.gateway.snapshot().get("turn",0))==saved_turn,"loaded snapshot preserves the processed turn")

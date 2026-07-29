@@ -2,7 +2,7 @@ class_name StrategyGateway
 extends RefCounted
 
 const GameSession = preload("res://src/core/game_session.gd")
-const CORE_SCENARIO := "res://data/scenarios/sample_campaign.json"
+const CORE_SCENARIO := "res://data/scenarios/prototype_east_asia.json"
 const AUTOSAVE_PATH := "user://autosave.json"
 
 signal snapshot_changed(snapshot: Dictionary)
@@ -228,7 +228,7 @@ func _sync_from_core() -> void:
 func _presentation_snapshot(core: Dictionary) -> Dictionary:
     var result := {
         "countries": {}, "provinces": {}, "armies": {}, "relations": core.get("relations", {}).duplicate(true),
-        "wars": [], "player_country_id": String(core.get("player_country_id", "")),
+        "wars": [], "scenario_id": String(core.get("scenario_id", "")), "player_country_id": String(core.get("player_country_id", "")),
         "date": core.get("date", {}).duplicate(true), "turn": int(core.get("turn", 1))
     }
     for id_value in core.get("countries", {}).keys():
@@ -247,7 +247,7 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
         province_item["controller"] = String(source.get("controller_id", province_item.owner))
         province_item["fort"] = int(source.get("fort_level", 0))
         province_item["revolt_risk"] = float(source.get("unrest", 0.0))
-        province_item["polygon"] = _visual_geometry.get(id, _fallback_polygon(id))
+        province_item["polygon"] = source.get("polygon", _visual_geometry.get(id, _fallback_polygon(id))).duplicate(true)
         result.provinces[id] = province_item
         result.armies[id] = 0
     for army in core.get("armies", {}).values():

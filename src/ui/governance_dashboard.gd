@@ -253,42 +253,57 @@ func _seed_governance(core_snapshot: Dictionary) -> void:
             "faction_id": country_id,
             "name": country.get("name", country_id),
             "government_type": preset.get("government_type", _map_government(String(country.get("government", "")))),
-            "authority_hidden": float(preset.get("authority_hidden", country.get("stability", 55.0))),
-            "legitimacy_hidden": float(preset.get("legitimacy_hidden", country.get("stability", 55.0))),
+            "authority_hidden": float(preset.get("authority_hidden", country.get("authority_hidden", country.get("stability", 55.0)))),
+            "legitimacy_hidden": float(preset.get("legitimacy_hidden", country.get("legitimacy_hidden", country.get("stability", 55.0)))),
             "corruption_hidden": float(preset.get("corruption_hidden", 15.0)),
-            "administration_capacity": int(preset.get("administration_capacity", 20 + administration_level * 18)),
+            "administration_capacity": int(preset.get("administration_capacity", country.get("administration_capacity", 20 + administration_level * 18))),
             "treasury": int(country.get("treasury", 0)),
-            "technology_tags": preset.get("technology_tags", _technology_tags(administration_level)),
+            "technology_tags": preset.get("technology_tags", country.get("technology_tags", _technology_tags(administration_level))),
             "active_reform": {},
             "reform_stage": "none",
         })
         var preset_groups: Dictionary = preset.get("groups", {})
+        var runtime_groups := {}
+        for runtime_group_value in country.get("governance_groups", []):
+            if runtime_group_value is Dictionary:
+                runtime_groups[String(runtime_group_value.get("group_type", ""))] = runtime_group_value
         for definition_value in governance.definitions.get("groups", {}).get("groups", []):
             if definition_value is not Dictionary:
                 continue
             var definition: Dictionary = definition_value
             var group_id := String(definition.get("id", ""))
-            var group_preset: Dictionary = preset_groups.get(group_id, {})
+            var group_preset: Dictionary = preset_groups.get(group_id, runtime_groups.get(group_id, {}))
             governance.register_group(country_id, {
                 "group_id": group_id,
                 "group_type": group_id,
-                "name": definition.get("name", group_id),
+                "name": group_preset.get("name", definition.get("name", group_id)),
                 "interests": definition.get("interests", []).duplicate(true),
                 "influence_hidden": float(group_preset.get("influence_hidden", _default_influence(group_id, country))),
                 "satisfaction_hidden": float(group_preset.get("satisfaction_hidden", country.get("stability", 55.0))),
                 "rebellion_risk_hidden": float(group_preset.get("rebellion_risk_hidden", 12.0)),
                 "mobilization_capacity": float(group_preset.get("mobilization_capacity", _default_mobilization(group_id))),
-                "demands": _default_demands(group_id),
-                "reform_stance": "neutral",
-                "active_causes": [],
+                "demands": group_preset.get("demands", _default_demands(group_id)).duplicate(true),
+                "reform_stance": group_preset.get("reform_stance", "neutral"),
+                "active_causes": group_preset.get("active_causes", []).duplicate(true),
                 "recent_modifiers": [],
-                "representative_character_id": "REP_%s_%s" % [country_id, group_id.to_upper()],
+                "representative_character_id": group_preset.get("representative_character_id", "REP_%s_%s" % [country_id, group_id.to_upper()]),
             })
 
     for province_id_value in core_snapshot.get("provinces", {}).keys():
         var province_id := int(province_id_value)
         var province: Dictionary = core_snapshot.get("provinces", {}).get(province_id_value, {})
         var governor: Dictionary = governor_seed.get(str(province_id), _fallback_governor(province_id))
+        if province.has("governor_name"):
+            governor = {
+                "character_id": province.get("governor_character_id", "GOV_%02d" % province_id),
+                "name": province.get("governor_name", "지방관"),
+                "governor_type": province.get("governor_type", "appointed_governor"),
+                "personality": province.get("governor_personality", "pragmatic"),
+                "loyalty": province.get("governor_loyalty", 60.0),
+                "ambition": province.get("governor_ambition", 40.0),
+                "administration": province.get("governor_administration", 50.0),
+                "military": province.get("governor_military", 45.0),
+            }
         var owner_id := String(province.get("owner", ""))
         var controller_id := String(province.get("controller", owner_id))
         governance.register_province({
@@ -828,6 +843,9 @@ func _governor_view(province: Dictionary) -> Dictionary:
 
 
 func _strategic_points(province_id: int, province: Dictionary) -> Array:
+    var runtime_names: Array = province.get("strategic_point_names", [])
+    if not runtime_names.is_empty():
+        return runtime_names.duplicate(true)
     var name := String(province.get("name", "Province %d" % province_id))
     var result := ["%s 중심 도시" % name, "%s 관아" % name, "%s 시장" % name, "%s 도로 교차점" % name, "%s 농업 거점" % name]
     if int(province.get("fort", 0)) > 0:
@@ -847,6 +865,8 @@ func _fallback_governor(province_id: int) -> Dictionary:
 
 
 func _map_government(value: String) -> String:
+    if value in ["tribal_confederation", "aristocratic_council", "feudal", "military_governorate", "commandery_county", "imperial_bureaucracy"]:
+        return value
     return {"monarchy": "feudal", "military_monarchy": "military_governorate", "republic": "aristocratic_council"}.get(value, "tribal_confederation")
 
 

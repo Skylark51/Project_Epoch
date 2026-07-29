@@ -6,7 +6,7 @@ var failures: Array[String] = []
 
 func _initialize() -> void:
 	var session := Session.new()
-	var started := session.start_scenario()
+	var started := session.start_scenario("res://data/scenarios/sample_campaign.json", "AUR")
 	_assert(started.ok, "sample scenario loads")
 	if not started.ok:
 		_finish()
@@ -40,8 +40,8 @@ func _initialize() -> void:
 func _test_battle_determinism() -> void:
 	var a := Session.new()
 	var b := Session.new()
-	a.start_scenario()
-	b.start_scenario()
+	a.start_scenario("res://data/scenarios/sample_campaign.json", "AUR")
+	b.start_scenario("res://data/scenarios/sample_campaign.json", "AUR")
 	for session in [a, b]:
 		session.submit_command("declare_war", {"target_id": "BOR"})
 		session.end_turn()
@@ -52,7 +52,7 @@ func _test_battle_determinism() -> void:
 
 func _test_diplomacy_and_peace() -> void:
 	var session := Session.new()
-	session.start_scenario()
+	session.start_scenario("res://data/scenarios/sample_campaign.json", "AUR")
 	_assert(session.submit_command("declare_war", {"target_id": "BOR"}).valid, "war declaration validates")
 	session.end_turn()
 	_assert(not session.state.wars.is_empty(), "war created")

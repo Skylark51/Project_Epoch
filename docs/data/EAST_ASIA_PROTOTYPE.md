@@ -1,6 +1,6 @@
 # 고대 동아시아 기반 데이터
 
-`prototype_east_asia`는 시작 연도가 확정되기 전 시스템·데이터 검증을 위한 별도 시나리오다. 기존 가상 3국 및 기존 월드 카탈로그는 회귀 테스트용으로 유지한다.
+`prototype_east_asia`는 시작 연도가 확정되기 전 시스템·데이터 검증을 위한 F5 기본 시나리오다. `ScenarioSystem`이 이 데이터 계약을 코어 런타임 상태로 변환하며, 기존 가상 3국 카탈로그는 회귀 테스트용으로만 유지한다.
 
 ## 범위
 
@@ -22,9 +22,9 @@
 - 연도에 따라 달라지는 세력 배치, 국호, 수도, 지점명은 `candidate`, `period_dependent_candidate`, `needs_review`로 표시한다.
 - 종교는 정통성·민심·외교·의례·통합 채널에 영향을 주지만, 같은 계층과 기능 유형에서는 성능 우열을 두지 않는다.
 
-## 독립 API
+## 런타임 연결과 독립 API
 
-메인 씬 변경 없이 다음 클래스를 preload해 사용할 수 있다.
+`res://src/main.tscn`은 `StrategyGateway`와 `ScenarioSystem`을 통해 이 시나리오를 기본으로 불러온다. 월드 기반 기능만 별도로 사용할 때는 다음 클래스를 preload할 수 있다.
 
 ```gdscript
 const EastAsiaWorldFoundation = preload("res://src/world/east_asia_world_foundation.gd")
