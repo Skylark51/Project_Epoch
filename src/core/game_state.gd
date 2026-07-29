@@ -1,6 +1,6 @@
 extends RefCounted
 
-const CURRENT_SCHEMA_VERSION := 1
+const CURRENT_SCHEMA_VERSION := 2
 var schema_version := CURRENT_SCHEMA_VERSION
 var scenario_id := ""
 var turn := 1
@@ -15,10 +15,11 @@ var treaties: Array = []
 var wars := {}
 var balance := {}
 var command_queue := {"commands": [], "next_id": 1}
+var governance_state := {}
 var metadata := {}
 
 func from_dict(data: Dictionary) -> void:
-	schema_version = int(data.get("schema_version", CURRENT_SCHEMA_VERSION))
+	schema_version = CURRENT_SCHEMA_VERSION
 	scenario_id = str(data.get("scenario_id", ""))
 	turn = int(data.get("turn", 1))
 	date = data.get("date", date).duplicate(true)
@@ -32,6 +33,7 @@ func from_dict(data: Dictionary) -> void:
 	wars = _key_by_id(data.get("wars", {}), false)
 	balance = data.get("balance", {}).duplicate(true)
 	command_queue = data.get("command_queue", command_queue).duplicate(true)
+	governance_state = data.get("governance_state", {}).duplicate(true)
 	metadata = data.get("metadata", {}).duplicate(true)
 
 func to_dict() -> Dictionary:
@@ -42,7 +44,8 @@ func to_dict() -> Dictionary:
 		"provinces": provinces.duplicate(true), "armies": armies.duplicate(true),
 		"relations": relations.duplicate(true), "treaties": treaties.duplicate(true),
 		"wars": wars.duplicate(true), "balance": balance.duplicate(true),
-		"command_queue": command_queue.duplicate(true), "metadata": metadata.duplicate(true)
+		"command_queue": command_queue.duplicate(true),
+		"governance_state": governance_state.duplicate(true), "metadata": metadata.duplicate(true)
 	}
 
 func owned_provinces(country_id: String) -> Array[int]:

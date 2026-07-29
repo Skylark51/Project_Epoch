@@ -1,9 +1,8 @@
 extends Control
 
-const BASE_MAIN_SCENE := preload("res://src/main.tscn")
 const GOVERNANCE_SESSION_SCRIPT := preload("res://src/governance/governance_session.gd")
 const SEED_PATH := "res://data/governance/sample_governance_state.json"
-const SAVE_PATH := "user://governance_autosave.json"
+const GOVERNANCE_DATA_VERSION := 1
 const GAME_SCREEN_STATE := 3
 
 var base_ui: Control
@@ -32,9 +31,9 @@ var setup_complete := false
 
 func _ready() -> void:
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    base_ui = BASE_MAIN_SCENE.instantiate()
-    base_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    add_child(base_ui)
+    mouse_filter = Control.MOUSE_FILTER_IGNORE
+    base_ui = get_parent() as Control
+    set_process(false)
     call_deferred("_setup_integration")
 
 
@@ -49,16 +48,19 @@ func _setup_integration() -> void:
 
     var gateway = _gateway()
     if gateway == null:
-        push_error("IntegratedMain: StrategyGateway를 찾지 못했습니다.")
+        push_error("GovernanceDashboard: StrategyGateway를 찾지 못했습니다.")
         return
     gateway.snapshot_changed.connect(_on_core_snapshot)
+    gateway.new_game_started.connect(_on_new_game_started)
+    gateway.autosave_loaded.connect(_on_autosave_loaded)
 
     var snapshot: Dictionary = gateway.snapshot()
-    _load_or_seed(snapshot)
+    _seed_governance(snapshot)
     _sync_from_core(snapshot)
     last_core_turn = int(snapshot.get("turn", 1))
     last_country_id = String(snapshot.get("player_country_id", ""))
     setup_complete = true
+    _save_governance(false)
     _refresh_all()
     set_process(true)
 
@@ -205,22 +207,28 @@ func _tab_text(tab_name: String) -> RichTextLabel:
     return text
 
 
-func _load_or_seed(core_snapshot: Dictionary) -> void:
-    var saved = _load_json(SAVE_PATH)
-    if saved is Dictionary and int(saved.get("core_turn", -1)) == int(core_snapshot.get("turn", 1)):
-        var state: Dictionary = saved.get("governance", {})
-        if not state.is_empty():
-            governance.turn = int(state.get("turn", 0))
-            governance.factions = state.get("factions", {}).duplicate(true)
-            governance.provinces = state.get("provinces", {}).duplicate(true)
-            governance.political_groups = state.get("political_groups", {}).duplicate(true)
-            governance.rebellions = state.get("rebellions", {}).duplicate(true)
-            governance.negotiations = state.get("negotiations", {}).duplicate(true)
-            governance.alerts = state.get("alerts", []).duplicate(true)
-            return
-    _seed_governance(core_snapshot)
-    _save_governance(false)
-
+func _restore_governance(core_snapshot: Dictionary, envelope: Dictionary) -> bool:
+    if int(envelope.get("data_version", -1)) != GOVERNANCE_DATA_VERSION:
+        push_error("GovernanceDashboard: 지원하지 않는 통치 저장 버전입니다.")
+        return false
+    if int(envelope.get("core_turn", -1)) != int(core_snapshot.get("turn", 1)):
+        push_error("GovernanceDashboard: 코어 턴과 통치 저장 턴이 일치하지 않습니다.")
+        return false
+    var state: Dictionary = envelope.get("state", {})
+    if state.is_empty():
+        push_error("GovernanceDashboard: 통치 저장 상태가 비어 있습니다.")
+        return false
+    governance.turn = int(state.get("turn", 0))
+    governance.factions = state.get("factions", {}).duplicate(true)
+    governance.provinces = state.get("provinces", {}).duplicate(true)
+    governance.political_groups = state.get("political_groups", {}).duplicate(true)
+    governance.rebellions = state.get("rebellions", {}).duplicate(true)
+    governance.negotiations = state.get("negotiations", {}).duplicate(true)
+    governance.alerts.clear()
+    for alert in state.get("alerts", []):
+        if alert is Dictionary:
+            governance.alerts.append(alert.duplicate(true))
+    return true
 
 func _seed_governance(core_snapshot: Dictionary) -> void:
     governance.turn = 0
@@ -332,6 +340,33 @@ func _sync_from_core(core_snapshot: Dictionary) -> void:
                 "occupation_abuse": 5.0 if controller_id != owner_id else 0.0,
             }, _governor_view(province), {"enemy_pressure": controller_id != owner_id})
 
+
+func _on_new_game_started(snapshot: Dictionary) -> void:
+    if not setup_complete:
+        return
+    _seed_governance(snapshot)
+    _sync_from_core(snapshot)
+    last_core_turn = int(snapshot.get("turn", 1))
+    last_country_id = String(snapshot.get("player_country_id", ""))
+    last_province_id = -1
+    _save_governance(false)
+    _refresh_all()
+
+
+func _on_autosave_loaded(snapshot: Dictionary) -> void:
+    if not setup_complete:
+        return
+    var gateway = _gateway()
+    var envelope: Dictionary = gateway.governance_save_data() if gateway != null else {}
+    if not _restore_governance(snapshot, envelope):
+        _seed_governance(snapshot)
+        _notify_base("통치 상태가 없는 이전 세이브입니다. 현재 코어 상태에서 통치 데이터를 새로 만들었습니다.", "warning")
+    _sync_from_core(snapshot)
+    last_core_turn = int(snapshot.get("turn", 1))
+    last_country_id = String(snapshot.get("player_country_id", ""))
+    last_province_id = -1
+    _save_governance(false)
+    _refresh_all()
 
 func _on_core_snapshot(snapshot: Dictionary) -> void:
     if not setup_complete:
@@ -689,15 +724,23 @@ func _save_governance(show_notice: bool) -> void:
     if governance == null:
         return
     var gateway = _gateway()
-    var payload := {"schema_version": 1, "core_turn": int(gateway.snapshot().get("turn", 1)) if gateway != null else last_core_turn, "player_country_id": _current_country_id(), "governance": governance.snapshot()}
-    var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-    if file == null:
-        push_error("IntegratedMain: 통치 저장 파일을 열 수 없습니다.")
+    if gateway == null:
+        push_error("GovernanceDashboard: 통합 저장을 담당할 StrategyGateway가 없습니다.")
         return
-    file.store_string(JSON.stringify(payload, "\t"))
+    gateway.set_governance_save_data({
+        "data_version": GOVERNANCE_DATA_VERSION,
+        "core_turn": int(gateway.snapshot().get("turn", last_core_turn)),
+        "player_country_id": _current_country_id(),
+        "state": governance.snapshot(),
+    })
     if show_notice:
-        _notify_base("통치 상태를 저장했습니다.", "success")
-
+        var result: Dictionary = gateway.save_autosave()
+        if bool(result.get("ok", false)):
+            _notify_base("코어와 통치 상태를 함께 저장했습니다.", "success")
+        else:
+            var message := "통합 저장 실패: %s" % str(result.get("error", "알 수 없는 오류"))
+            push_error("GovernanceDashboard: %s" % message)
+            _notify_base(message, "error")
 
 func _gateway():
     return base_ui.get("gateway") if base_ui != null else null

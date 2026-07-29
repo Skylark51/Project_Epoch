@@ -5,9 +5,11 @@ The included `sample_campaign` uses three countries and nine Provinces. IDs are
 stable; Province neighbor relations must be symmetric; each living country has one
 capital and every owner/controller must exist.
 
-Save schema version 1 stores scenario ID, turn/date, countries, Provinces, armies,
-relations, treaties, wars, queued commands, balance snapshot and random seed.
-`SaveManager.migrate()` upgrades version 0 by adding the command queue.
+Save schema version 2 stores scenario ID, turn/date, countries, Provinces, armies,
+relations, treaties, wars, queued commands, balance snapshot, random seed and the
+versioned `governance_state` envelope in one `user://autosave.json` file.
+`SaveManager.migrate()` upgrades version 0 by adding the command queue, then upgrades
+version 1 by adding an empty governance state for safe legacy loading.
 
 `src/importers/aocii_importer.gd` inspects a user-selected ZIP-compatible EGG locally
 and classifies paths. `convert_records()` maps already decoded records into the
