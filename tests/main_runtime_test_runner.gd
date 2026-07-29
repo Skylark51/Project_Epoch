@@ -40,13 +40,19 @@ func _run() -> void:
     _expect(component.get_node_or_null("GovernanceLauncher") != null, "통치·반란 실행 버튼이 있어야 한다.")
     _expect(component.get_node_or_null("GovernanceDashboard") != null, "통치 대시보드 창이 있어야 한다.")
 
+    var gateway = root.get("gateway")
     var governance = component.get("governance")
     var governance_snapshot: Dictionary = governance.snapshot()
-    _expect(governance_snapshot.get("factions", {}).size() >= 3, "기존 국가가 통치 시스템에 등록되어야 한다.")
-    _expect(governance_snapshot.get("provinces", {}).size() >= 9, "기존 프로빈스가 통치 시스템에 등록되어야 한다.")
-    _expect(governance_snapshot.get("political_groups", {}).get("AUR", {}).size() == 5, "기본 정치 집단 5개가 등록되어야 한다.")
+    _expect(governance_snapshot.get("factions", {}).size() >= 11, "동아시아 플레이 가능 국가가 통치 시스템에 등록되어야 한다.")
+    _expect(governance_snapshot.get("provinces", {}).size() == 13, "동아시아 프로빈스 13개가 통치 시스템에 등록되어야 한다.")
+    _expect(governance_snapshot.get("political_groups", {}).get("goguryeo", {}).size() == 5, "기본 정치 집단 5개가 등록되어야 한다.")
+    _expect(String(gateway.snapshot().get("scenario_id", "")) == "prototype_east_asia", "F5 런타임이 동아시아 시나리오를 사용해야 한다.")
+    _expect(String(gateway.country("goguryeo").get("name", "")) == "고구려", "국가 선택에 고구려가 노출되어야 한다.")
+    _expect(String(gateway.province(1).get("source_province_id", "")) == "guknae_basin", "전략 지도가 동아시아 프로빈스 원본 ID를 유지해야 한다.")
+    _expect(gateway.province(1).get("polygon", []).size() == 6, "전략 지도가 동아시아 전용 프로빈스 좌표를 사용해야 한다.")
     var province: Dictionary = governance_snapshot.get("provinces", {}).get("1", {})
-    _expect(String(province.get("governor_name", "")) != "", "모든 프로빈스에 이름 있는 통치자가 있어야 한다.")
+    _expect(String(province.get("name", "")) == "국내성 권역", "첫 프로빈스가 국내성 권역이어야 한다.")
+    _expect(String(province.get("governor_name", "")) == "해무진", "Codex2의 이름 있는 통치자가 연결되어야 한다.")
     _expect(province.get("strategic_point_ids", []).size() >= 5, "프로빈스에 핵심 지점이 5개 이상 있어야 한다.")
 
     component.call("_open_dashboard")
@@ -54,7 +60,6 @@ func _run() -> void:
     var dashboard = component.get("dashboard")
     _expect(dashboard != null and dashboard.visible, "메인 씬에서 통치 대시보드를 실제로 열 수 있어야 한다.")
 
-    var gateway = root.get("gateway")
     gateway.autosave_path = TEST_SAVE_PATH
     var core_turn_before := int(gateway.snapshot().get("turn", -1))
     var governance_turn_before := int(governance.turn)
@@ -78,7 +83,7 @@ func _run() -> void:
     _expect(int(gateway.snapshot().get("turn", -1)) == saved_core_turn, "불러오기 시 코어 상태가 복원되어야 한다.")
     _expect(int(governance.turn) == saved_governance_turn, "불러오기 시 통치 상태도 함께 복원되어야 한다.")
 
-    _expect(gateway.select_player_country("BOR"), "새 게임 국가를 선택할 수 있어야 한다.")
+    _expect(gateway.select_player_country("baekje"), "백제로 새 게임을 시작할 수 있어야 한다.")
     await process_frame
     _expect(int(gateway.snapshot().get("turn", -1)) == 1, "새 게임은 첫 턴에서 시작해야 한다.")
     _expect(int(governance.turn) == 0, "새 게임은 이전 통치 세이브를 무단 복원하지 않아야 한다.")

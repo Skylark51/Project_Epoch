@@ -6,7 +6,7 @@ const LOG_LIMIT := 120
 
 var gateway := StrategyGateway.new()
 var state := ScreenState.START
-var selected_country := "AUR"
+var selected_country := "goguryeo"
 var selected_province := -1
 var selected_provinces: Array[int] = []
 var pending_sources: Array[int] = []
@@ -37,7 +37,7 @@ func _ready() -> void:
     gateway.turn_requested.connect(func(commands): _add_log("중요","코어 턴 처리 요청 · %d개 명령" % commands.size(),"important"))
     gateway.turn_requested.connect(_before_turn)
     if gateway.load_local_catalog():
-        selected_country = String(gateway.snapshot().get("player_country_id","AUR"))
+        selected_country = String(gateway.snapshot().get("player_country_id","goguryeo"))
         _sync_snapshot(gateway.snapshot())
     else: _notify("기본 JSON 데이터를 불러오지 못했습니다.","error")
     _show(ScreenState.START)
@@ -95,16 +95,16 @@ func _build_start() -> Control:
 
 func _load_game() -> void:
     if not gateway.load_autosave(): return
-    selected_country=String(gateway.snapshot().get("player_country_id","AUR")); selected_province=-1; _sync_snapshot(gateway.snapshot()); _show(ScreenState.GAME); _notify("자동 저장 게임을 불러왔습니다.","success")
+    selected_country=String(gateway.snapshot().get("player_country_id","goguryeo")); selected_province=-1; _sync_snapshot(gateway.snapshot()); _show(ScreenState.GAME); _notify("자동 저장 게임을 불러왔습니다.","success")
 
 func _build_scenario() -> Control:
     var root:=_margin(18); var outer:=VBoxContainer.new(); outer.add_theme_constant_override("separation",12); root.add_child(outer)
     outer.add_child(_header("시나리오 선택","시대와 지역을 고른 뒤 지도를 확인하세요",func():_show(ScreenState.START)))
     var split:=HSplitContainer.new(); split.size_flags_vertical=Control.SIZE_EXPAND_FILL; split.split_offset=270; outer.add_child(split)
     var left:=_section("시대 · 지역 · 시나리오",250); split.add_child(left)
-    var era:=OptionButton.new(); era.add_item("중세 · 1000년"); era.add_item("근세 · 준비 중"); left.add_child(era)
-    var region:=OptionButton.new(); region.add_item("프로토타입 대륙"); left.add_child(region)
-    left.add_child(_button("삼국의 균형\n1000. 1. 1.",_refresh_scenario,"list",72))
+    var era:=OptionButton.new(); era.add_item("고대 동아시아 · 프로토타입"); era.add_item("시대 확정 후 추가"); left.add_child(era)
+    var region:=OptionButton.new(); region.add_item("한반도 · 요동 · 중국 동부 · 일본"); left.add_child(region)
+    left.add_child(_button("고대 동아시아 기반\n프로토타입 시작",_refresh_scenario,"list",72))
     var middle:=_section("지도 미리보기"); middle.size_flags_horizontal=Control.SIZE_EXPAND_FILL; split.add_child(middle)
     var map:=StrategicMap.new(); map.size_flags_vertical=Control.SIZE_EXPAND_FILL; maps[ScreenState.SCENARIO]=map; middle.add_child(map)
     var right:=_section("시나리오 정보",310); split.add_child(right)
@@ -232,7 +232,11 @@ func _sync_snapshot(snapshot: Dictionary) -> void:
 func _refresh_scenario() -> void:
     if not ui.has("scenario_detail"): return
     var scenario:Dictionary=gateway.scenarios()[0] if not gateway.scenarios().is_empty() else {}
-    ui.scenario_detail.text="[font_size=22][color=#ddc47e]%s[/color][/font_size]\n\n시작 연도  [b]%s[/b]\n국가 수  [b]%d[/b]\n턴 방식  [b]동시 명령[/b]\n\n%s\n\n[color=#9fb0b5]추천 국가[/color]\n• 아우렐리아 · 균형형\n• 보레알 왕국 · 군사형\n• 세레네 공화국 · 경제형" % [String(scenario.get("name","삼국의 균형")),str(scenario.get("start_date",{}).get("year",1000)),gateway.countries().size(),String(scenario.get("description",""))]
+    var recommendations: Array[String] = []
+    for country in gateway.countries().values():
+        if recommendations.size() >= 5: break
+        recommendations.append("• %s" % String(country.get("name", country.get("id", ""))))
+    ui.scenario_detail.text="[font_size=22][color=#ddc47e]%s[/color][/font_size]\n\n시작 연도  [b]%s년(프로토타입)[/b]\n국가 수  [b]%d[/b]\n턴 방식  [b]동시 명령[/b]\n\n%s\n\n[color=#9fb0b5]플레이 가능 국가[/color]\n%s" % [String(scenario.get("name","고대 동아시아 기반 시나리오")),str(scenario.get("start_date",{}).get("year",300)),gateway.countries().size(),String(scenario.get("description","")),"\n".join(recommendations)]
 
 func _rebuild_countries(filter_text:String) -> void:
     if not ui.has("country_list"): return

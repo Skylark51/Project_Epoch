@@ -15,7 +15,7 @@ var processor := TurnProcessor.new()
 var scenarios := ScenarioSystem.new()
 var saves := SaveManager.new()
 
-func start_scenario(path: String = "res://data/scenarios/sample_campaign.json", player_country_id: String = "") -> Dictionary:
+func start_scenario(path: String = "res://data/scenarios/prototype_east_asia.json", player_country_id: String = "") -> Dictionary:
 	var loaded := scenarios.load_scenario(path, player_country_id)
 	if not loaded.ok:
 		return loaded
