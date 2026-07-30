@@ -47,7 +47,7 @@ func _run() -> void:
     dialogue.call("_set_frame", 29)
     _expect(int(dialogue.get("current_frame")) == 29, "마지막 프레임까지 선택할 수 있어야 한다.")
     var atlas = dialogue.get("portrait_atlas")
-    _expect(atlas != null and atlas.region.size == Vector2(256, 256), "각 초상 프레임은 256×256이어야 한다.")
+    _expect(atlas != null and atlas.region.size == Vector2(128, 128), "각 초상 프레임은 128×128이어야 한다.")
 
     dialogue.call("close_dialogue")
     _expect(not dialogue.call("is_dialogue_open"), "군주 대화를 종료할 수 있어야 한다.")
