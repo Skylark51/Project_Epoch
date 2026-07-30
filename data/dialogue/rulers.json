@@ -7,8 +7,8 @@
     "portrait": "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.png",
     "columns": 5,
     "rows": 6,
-    "frame_width": 256,
-    "frame_height": 256,
+    "frame_width": 128,
+    "frame_height": 128,
     "frame_count": 30,
     "fps": 12.0,
     "dialogue": [
