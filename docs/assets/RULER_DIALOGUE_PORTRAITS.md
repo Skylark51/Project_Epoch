@@ -8,7 +8,7 @@
 
 - PNG
 - 5열 × 6행
-- 프레임당 256 × 256 px
+- 프레임당 128 × 128 px
 - 총 30프레임
 - 파일 위치: `assets/portraits/rulers/<country>/<ruler>_dialogue_30f.png`
 
