@@ -65,6 +65,7 @@ var show_coast_highlight := false
 var show_region_ids := false
 var visible_chunk_count := 0
 var last_rendered_tile_count := 0
+var _screen_text_commands: Array[Dictionary] = []
 const PICK_BUCKET_SIZE := 160.0
 
 func _ready() -> void:
@@ -329,6 +330,7 @@ func _province_at(screen_point: Vector2) -> int:
             return id
     return -1
 func _draw() -> void:
+    _screen_text_commands.clear()
     draw_rect(Rect2(Vector2.ZERO, size), Color("#0c1821"))
     draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
     var numeric_range := _robust_range(_numeric_values(map_mode))
@@ -343,6 +345,7 @@ func _draw() -> void:
     _draw_command_paths()
     _draw_icons_and_labels()
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    _draw_screen_text_commands()
     if _selection_dragging:
         var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
         draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
@@ -352,6 +355,31 @@ func _draw() -> void:
     if debug_map_enabled and world_map != null:
         _draw_map_debug_overlay()
 
+func _queue_map_text(world_position: Vector2, text: String, font_size: int, color: Color, screen_offset := Vector2.ZERO, centered := false) -> void:
+    if text.is_empty():
+        return
+    _screen_text_commands.append({
+        "world_position": world_position,
+        "text": text,
+        "font_size": font_size,
+        "color": color,
+        "screen_offset": screen_offset,
+        "centered": centered,
+    })
+
+func _draw_screen_text_commands() -> void:
+    var font := ThemeDB.fallback_font
+    var visible_bounds := Rect2(Vector2.ZERO, size).grow(256.0)
+    for command in _screen_text_commands:
+        var screen_position: Vector2 = Vector2(command.get("world_position", Vector2.ZERO)) * zoom + pan + Vector2(command.get("screen_offset", Vector2.ZERO))
+        if not visible_bounds.has_point(screen_position):
+            continue
+        var text := String(command.get("text", ""))
+        var font_size := int(command.get("font_size", 14))
+        if bool(command.get("centered", false)):
+            var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+            screen_position.x -= text_size.x * 0.5
+        draw_string(font, screen_position, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(command.get("color", Color.WHITE)))
 func _draw_province_polygons(numeric_range: Vector2) -> void:
     for id_value in provinces.keys():
         var id := int(id_value)
@@ -426,17 +454,13 @@ func _draw_world_labels() -> void:
         ["일본 열도", 137.8, 37.0, false], ["황해", 123.5, 35.0, true],
         ["동해", 132.7, 40.0, true], ["동중국해", 125.0, 28.0, true]
     ]
-    var font := ThemeDB.fallback_font
     for label in labels:
         var position := world_map.world_from_lonlat(float(label[1]), float(label[2]))
-        var font_size := clampi(roundi(18.0 / zoom), 6, 128)
         var text := String(label[0])
-        var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
         var color := Color(0.60, 0.80, 0.88, 0.62) if bool(label[3]) else Color(0.94, 0.88, 0.68, 0.56)
-        draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+        _queue_map_text(position, text, 18, color, Vector2.ZERO, true)
 
 func _draw_cities() -> void:
-    var font := ThemeDB.fallback_font
     for city_value in world_map.cities:
         if city_value is not Dictionary:
             continue
@@ -451,15 +475,14 @@ func _draw_cities() -> void:
         draw_circle(position, radius, Color("#f4d58a"))
         draw_arc(position, radius, 0.0, TAU, 12, Color("#1c1e1f"), 1.2 / zoom)
         if zoom >= 0.52:
-            var city_font_size := clampi(roundi(12.0 / zoom), 2, 28)
-            draw_string(font, position + Vector2(6.0 / zoom, -3.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+            _queue_map_text(position, String(city.get("name", city.get("id", ""))), 12, Color("#f2ead8"), Vector2(6.0, -3.0))
 
 func _draw_region_ids() -> void:
     var anchors: Dictionary = world_map.manifest.get("province_anchors", {})
     for source_id in anchors.keys():
         var anchor: Dictionary = anchors[source_id]
         var position := Vector2(float(anchor.get("map_x", 0.0)), float(anchor.get("map_y", 0.0))) * world_map.tile_size
-        draw_string(ThemeDB.fallback_font, position, String(source_id), HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(roundi(10.0 / zoom), 2, 32), Color("#f4d58a"))
+        _queue_map_text(position, String(source_id), 10, Color("#f4d58a"))
 
 func _draw_map_debug_overlay() -> void:
     var mouse_world := _screen_to_world(get_local_mouse_position())
@@ -528,7 +551,6 @@ func _tile_land_color(tile: Dictionary, province: Dictionary, numeric_range: Vec
 func _draw_region_labels() -> void:
     if zoom < 0.5:
         return
-    var font := ThemeDB.fallback_font
     for label_value in map_labels:
         if label_value is not Dictionary:
             continue
@@ -540,10 +562,8 @@ func _draw_region_labels() -> void:
         elif position_value is Array and position_value.size() >= 2:
             position = Vector2(float(position_value[0]), float(position_value[1]))
         var text := String(label.get("text", ""))
-        var font_size := 19
-        var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
         var color := Color(0.56, 0.76, 0.84, 0.55) if String(label.get("kind", "")) == "sea" else Color(0.91, 0.85, 0.69, 0.30)
-        draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+        _queue_map_text(position, text, 19, color, Vector2.ZERO, true)
 
 func _draw_grid() -> void:
     var start_x := int(floor(_world_rect.position.x / 80.0)) * 80
@@ -569,15 +589,13 @@ func _draw_icons_and_labels() -> void:
             draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#3a3028"), false, 1.5 / zoom)
         if zoom >= 0.72:
             var label := String(province.get("name", "Province"))
-            var font := ThemeDB.fallback_font
             var font_size := 14 if zoom >= 1.35 else 11
-            var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-            draw_string(font, center - Vector2(text_size.x * 0.5, 0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color("#f2ead8"))
+            _queue_map_text(center, label, font_size, Color("#f2ead8"), Vector2.ZERO, true)
         if zoom >= 0.58:
             var amount := int(armies.get(id, province.get("army", 0)))
             var badge := Rect2(center + Vector2(-17, 8), Vector2(34, 20))
             draw_style_box(_badge_style(), badge)
-            draw_string(ThemeDB.fallback_font, badge.position + Vector2(7, 15), str(amount), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
+            _queue_map_text(badge.position + Vector2(7, 15), str(amount), 11, Color.WHITE)
 
 func _draw_command_paths() -> void:
     for path in _command_paths:

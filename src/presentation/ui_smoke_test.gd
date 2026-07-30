@@ -52,6 +52,14 @@ func _run() -> void:
     var left_drag_release:=InputEventMouseButton.new(); left_drag_release.button_index=MOUSE_BUTTON_LEFT; left_drag_release.pressed=false; left_drag_release.position=left_drag_motion.position; map._gui_input(left_drag_release)
     check(map.pan.distance_to(pan_before_left_drag)>5.0,"holding and dragging the left mouse button pans the map")
     check(app.selected_province==selected_before_left_drag,"left-button panning does not change Province selection")
+    var zoom_before_text_quality:=map.zoom
+    map.zoom=4.0; map.queue_redraw(); await process_frame
+    var screen_text_sizes_are_stable:=not map._screen_text_commands.is_empty()
+    for text_command in map._screen_text_commands:
+        var queued_font_size:=int(text_command.get("font_size",0))
+        if queued_font_size<10 or queued_font_size>19: screen_text_sizes_are_stable=false
+    check(screen_text_sizes_are_stable,"map labels render at stable screen-space font sizes when zoomed in")
+    map.zoom=zoom_before_text_quality; map.queue_redraw(); await process_frame
     check(not map._spatial_buckets.is_empty(),"Province spatial picking index is built")
     var sea_pick_checked:=false
     if map.world_map != null:
