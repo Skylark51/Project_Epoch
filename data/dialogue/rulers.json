@@ -1,0 +1,30 @@
+{
+  "goguryeo": {
+    "ruler_id": "gwanggaeto",
+    "name": "광개토대왕",
+    "personal_name": "담덕",
+    "title": "고구려 제19대 국왕",
+    "portrait_parts": [
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part00.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part01.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part02.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part03.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part04.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part05.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part06.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part07.b64",
+      "res://assets/portraits/rulers/goguryeo/gwanggaeto_dialogue_30f.part08.b64"
+    ],
+    "columns": 5,
+    "rows": 6,
+    "frame_width": 64,
+    "frame_height": 64,
+    "frame_count": 30,
+    "fps": 12.0,
+    "dialogue": [
+      "그대가 오늘의 국정을 맡을 자인가. 고구려의 강역은 넓지만, 국경마다 뜻을 달리하는 세력이 도사리고 있다.",
+      "군사를 움직이기 전에 백성과 성곽, 보급로를 함께 살펴라. 넓힌 땅을 다스리지 못하면 승리는 오래가지 못한다.",
+      "이제 지도를 보라. 우리의 선택이 훗날 천하의 경계를 바꾸게 될 것이다."
+    ]
+  }
+}

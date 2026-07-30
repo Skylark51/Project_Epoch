@@ -78,6 +78,7 @@ $testScripts = @(
     "res://tests/readable_boundaries_test_runner.gd",
     "res://tests/world_test_runner.gd",
     "res://tests/governance_rebellion_test_runner.gd",
+    "res://tests/ruler_dialogue_test_runner.gd",
     "res://tests/main_runtime_test_runner.gd"
 )
 
