@@ -1,11 +1,12 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 2
+const STATE_VERSION := 3
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
 const MIN_CITY_CENTER_DISTANCE := CITY_EXCLUSION_RADIUS + 1
+const CITY_MAX_INFLUENCE_RADIUS := 2
 
 var _state: Dictionary = {}
 
@@ -34,6 +35,7 @@ func load_snapshot(source: Dictionary) -> void:
 	for key in ["tiles", "settlements", "regions"]:
 		if _state.get(key, {}) is not Dictionary:
 			_state[key] = {}
+	_migrate_legacy_management_links()
 	_state["next_settlement_id"] = _normalized_next_settlement_id(
 		int(_state.get("next_settlement_id", 1))
 	)
@@ -188,6 +190,208 @@ func city_center_distance(first: Vector2i, second: Vector2i) -> int:
 	return maxi(absi(first.x - second.x), absi(first.y - second.y))
 
 
+func managed_tiles(settlement_id: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for tile_value in _state.get("tiles", {}).values():
+		if tile_value is not Dictionary:
+			continue
+		var tile_record: Dictionary = tile_value
+		if String(tile_record.get("managing_settlement_id", "")) == settlement_id:
+			result.append(tile_record.duplicate(true))
+	result.sort_custom(
+		func(first: Dictionary, second: Dictionary) -> bool:
+			if int(first.get("row", -1)) == int(second.get("row", -1)):
+				return int(first.get("column", -1)) < int(second.get("column", -1))
+			return int(first.get("row", -1)) < int(second.get("row", -1))
+	)
+	return result
+
+
+func expand_city_influence(
+	world_map,
+	settlement_id: String,
+	target_radius: int = CITY_MAX_INFLUENCE_RADIUS
+) -> Dictionary:
+	if world_map == null:
+		return {
+			"ok": false,
+			"reason_code": "world_map_unavailable",
+			"reason": "세계 지도가 아직 준비되지 않았습니다.",
+		}
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "영향권을 확장할 도시가 없습니다.",
+		}
+	if target_radius < INITIAL_CLAIM_RADIUS or target_radius > CITY_MAX_INFLUENCE_RADIUS:
+		return {
+			"ok": false,
+			"reason_code": "radius_out_of_range",
+			"reason": "도시 영향권 반경은 %d에서 %d까지만 허용됩니다."
+			% [INITIAL_CLAIM_RADIUS, CITY_MAX_INFLUENCE_RADIUS],
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var current_radius := int(
+		settlement_record.get("influence_radius", INITIAL_CLAIM_RADIUS)
+	)
+	if target_radius < current_radius:
+		return {
+			"ok": false,
+			"reason_code": "influence_cannot_shrink",
+			"reason": "도시 영향권은 명시적인 영토 이전 없이 축소할 수 없습니다.",
+		}
+	var center := Vector2i(
+		int(settlement_record.get("column", -1)),
+		int(settlement_record.get("row", -1))
+	)
+	var owner_id := String(settlement_record.get("owner_id", ""))
+	var claimed_lookup: Dictionary = {}
+	for claimed_key_value in settlement_record.get("claimed_tile_keys", []):
+		claimed_lookup[String(claimed_key_value)] = true
+	var newly_claimed: Array[String] = []
+	var blocked_by: Dictionary = {}
+	for row in range(center.y - target_radius, center.y + target_radius + 1):
+		for column in range(center.x - target_radius, center.x + target_radius + 1):
+			var candidate := Vector2i(column, row)
+			if city_center_distance(center, candidate) > target_radius:
+				continue
+			if not world_map.contains(candidate.x, candidate.y):
+				continue
+			if not _can_claim_around_city(world_map, candidate):
+				continue
+			var key := _tile_key(world_map, candidate)
+			var current: Dictionary = _state.tiles.get(key, {})
+			if not current.is_empty():
+				var current_manager := String(
+					current.get("managing_settlement_id", "")
+				)
+				if current_manager == settlement_id:
+					claimed_lookup[key] = true
+				elif not current_manager.is_empty():
+					blocked_by[current_manager] = true
+				continue
+			_state.tiles[key] = _make_tile_record(
+				world_map,
+				candidate,
+				owner_id,
+				"",
+				settlement_id
+			)
+			claimed_lookup[key] = true
+			newly_claimed.append(key)
+	var all_claimed: Array[String] = []
+	for key_value in claimed_lookup.keys():
+		all_claimed.append(String(key_value))
+	all_claimed.sort()
+	settlement_record["claimed_tile_keys"] = all_claimed
+	settlement_record["influence_radius"] = target_radius
+	_state.settlements[settlement_id] = settlement_record
+	_rebuild_regions()
+	var blocked_ids: Array[String] = []
+	for blocked_id_value in blocked_by.keys():
+		blocked_ids.append(String(blocked_id_value))
+	blocked_ids.sort()
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"influence_radius": target_radius,
+		"newly_claimed_tile_keys": newly_claimed,
+		"claimed_tile_count": all_claimed.size(),
+		"blocked_by_settlement_ids": blocked_ids,
+		"border_edges": border_edges(world_map, false, settlement_id),
+	}
+
+
+func border_edges(
+	world_map,
+	include_frontier: bool = false,
+	settlement_id: String = ""
+) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if world_map == null:
+		return result
+	var tiles: Dictionary = _state.get("tiles", {})
+	var offsets: Array[Vector2i] = [
+		Vector2i(-1, 0),
+		Vector2i(1, 0),
+		Vector2i(0, -1),
+		Vector2i(0, 1),
+	]
+	for key_value in tiles.keys():
+		var key := String(key_value)
+		var tile_record: Dictionary = tiles[key_value]
+		var first_manager := String(
+			tile_record.get("managing_settlement_id", "")
+		)
+		if first_manager.is_empty():
+			continue
+		if not settlement_id.is_empty() and first_manager != settlement_id:
+			continue
+		var first_owner := String(tile_record.get("owner_id", ""))
+		var tile := Vector2i(
+			int(tile_record.get("column", -1)),
+			int(tile_record.get("row", -1))
+		)
+		for offset in offsets:
+			var neighbor := tile + offset
+			if not world_map.contains(neighbor.x, neighbor.y):
+				if include_frontier:
+					result.append(
+						_make_border_edge(
+							tile,
+							neighbor,
+							first_manager,
+							"",
+							first_owner,
+							"",
+							"frontier"
+						)
+					)
+				continue
+			var neighbor_key := _tile_key(world_map, neighbor)
+			var neighbor_record: Dictionary = tiles.get(neighbor_key, {})
+			var second_manager := String(
+				neighbor_record.get("managing_settlement_id", "")
+			)
+			if second_manager.is_empty():
+				if include_frontier:
+					result.append(
+						_make_border_edge(
+							tile,
+							neighbor,
+							first_manager,
+							"",
+							first_owner,
+							"",
+							"frontier"
+						)
+					)
+				continue
+			if second_manager == first_manager:
+				continue
+			if settlement_id.is_empty() and int(key) > int(neighbor_key):
+				continue
+			var second_owner := String(neighbor_record.get("owner_id", ""))
+			result.append(
+				_make_border_edge(
+					tile,
+					neighbor,
+					first_manager,
+					second_manager,
+					first_owner,
+					second_owner,
+					(
+						"national_border"
+						if first_owner != second_owner
+						else "city_management_border"
+					)
+				)
+			)
+	return result
+
+
 func validate_state(world_map) -> Dictionary:
 	var errors: Array[String] = []
 	var warnings: Array[String] = []
@@ -220,6 +424,17 @@ func validate_state(world_map) -> Dictionary:
 		if String(tile_record.get("region_id", "")) != _region_id(world_map, tile):
 			errors.append("tile_region_mismatch:%s" % tile_key)
 		var linked_settlement_id := String(tile_record.get("settlement_id", ""))
+		var managing_settlement_id := String(
+			tile_record.get("managing_settlement_id", "")
+		)
+		if managing_settlement_id.is_empty():
+			errors.append("tile_manager_missing:%s" % tile_key)
+		elif not settlements.has(managing_settlement_id):
+			errors.append("tile_manager_unknown:%s" % tile_key)
+		elif String(settlements[managing_settlement_id].get("owner_id", "")) != String(
+			tile_record.get("owner_id", "")
+		):
+			errors.append("tile_manager_owner_mismatch:%s" % tile_key)
 		if not linked_settlement_id.is_empty():
 			if not settlements.has(linked_settlement_id):
 				errors.append("tile_settlement_missing:%s" % tile_key)
@@ -261,6 +476,11 @@ func validate_state(world_map) -> Dictionary:
 			errors.append("settlement_center_tile_missing:%s" % settlement_key)
 		elif String(center_record.get("settlement_id", "")) != settlement_key:
 			errors.append("settlement_center_link_mismatch:%s" % settlement_key)
+		if (
+			not center_record.is_empty()
+			and String(center_record.get("managing_settlement_id", "")) != settlement_key
+		):
+			errors.append("settlement_center_manager_mismatch:%s" % settlement_key)
 		if String(settlement_record.get("region_id", "")) != _region_id(world_map, center):
 			errors.append("settlement_region_mismatch:%s" % settlement_key)
 		for claimed_key_value in settlement_record.get("claimed_tile_keys", []):
@@ -277,6 +497,11 @@ func validate_state(world_map) -> Dictionary:
 			):
 				errors.append(
 					"settlement_claim_owner_mismatch:%s:%s"
+					% [settlement_key, claimed_key]
+				)
+			if String(claimed_tile.get("managing_settlement_id", "")) != settlement_key:
+				errors.append(
+					"settlement_claim_manager_mismatch:%s:%s"
 					% [settlement_key, claimed_key]
 				)
 	var settlement_ids: Array = settlements.keys()
@@ -349,16 +574,14 @@ func _found_validated_city(
 				continue
 			var key := _tile_key(world_map, claim_tile)
 			var current: Dictionary = _state.tiles.get(key, {})
-			if (
-				not current.is_empty()
-				and String(current.get("owner_id", "")) != owner_id
-			):
+			if not current.is_empty():
 				continue
 			_state.tiles[key] = _make_tile_record(
 				world_map,
 				claim_tile,
 				owner_id,
-				settlement_id if claim_tile == tile else ""
+				settlement_id if claim_tile == tile else "",
+				settlement_id
 			)
 			claimed_keys.append(key)
 	claimed_keys.sort()
@@ -380,6 +603,7 @@ func _found_validated_city(
 		"is_capital": bool(options.get("is_capital", false)),
 		"founded_turn": maxi(1, int(options.get("founded_turn", 1))),
 		"claimed_tile_keys": claimed_keys,
+		"influence_radius": INITIAL_CLAIM_RADIUS,
 	}
 	_state.settlements[settlement_id] = settlement_record
 	_rebuild_regions()
@@ -429,7 +653,8 @@ func _make_tile_record(
 	world_map,
 	tile: Vector2i,
 	owner_id: String,
-	settlement_id: String
+	settlement_id: String,
+	managing_settlement_id: String
 ) -> Dictionary:
 	return {
 		"column": tile.x,
@@ -439,7 +664,28 @@ func _make_tile_record(
 		"province_id": int(world_map.province_id(tile.x, tile.y)),
 		"terrain_id": int(world_map.terrain_id(tile.x, tile.y)),
 		"settlement_id": settlement_id,
+		"managing_settlement_id": managing_settlement_id,
 		"worked": bool(tile_state(world_map, tile).get("worked", false)),
+	}
+
+
+func _make_border_edge(
+	first_tile: Vector2i,
+	second_tile: Vector2i,
+	first_settlement_id: String,
+	second_settlement_id: String,
+	first_owner_id: String,
+	second_owner_id: String,
+	kind: String
+) -> Dictionary:
+	return {
+		"from_tile": first_tile,
+		"to_tile": second_tile,
+		"first_settlement_id": first_settlement_id,
+		"second_settlement_id": second_settlement_id,
+		"first_owner_id": first_owner_id,
+		"second_owner_id": second_owner_id,
+		"kind": kind,
 	}
 
 
@@ -497,6 +743,38 @@ func _take_next_settlement_id() -> String:
 	var settlement_id := "settlement_%d" % serial
 	_state["next_settlement_id"] = serial + 1
 	return settlement_id
+
+
+func _migrate_legacy_management_links() -> void:
+	var tiles: Dictionary = _state.get("tiles", {})
+	var settlements: Dictionary = _state.get("settlements", {})
+	for settlement_key_value in settlements.keys():
+		var settlement_id := String(settlement_key_value)
+		var settlement_value = settlements[settlement_key_value]
+		if settlement_value is not Dictionary:
+			continue
+		var settlement_record: Dictionary = settlement_value
+		settlement_record["influence_radius"] = clampi(
+			int(
+				settlement_record.get(
+					"influence_radius",
+					INITIAL_CLAIM_RADIUS
+				)
+			),
+			INITIAL_CLAIM_RADIUS,
+			CITY_MAX_INFLUENCE_RADIUS
+		)
+		for claimed_key_value in settlement_record.get("claimed_tile_keys", []):
+			var claimed_key := String(claimed_key_value)
+			if not tiles.has(claimed_key):
+				continue
+			var tile_record: Dictionary = tiles[claimed_key]
+			if String(tile_record.get("managing_settlement_id", "")).is_empty():
+				tile_record["managing_settlement_id"] = settlement_id
+			tiles[claimed_key] = tile_record
+		settlements[settlement_key_value] = settlement_record
+	_state["tiles"] = tiles
+	_state["settlements"] = settlements
 
 
 func _region_id(world_map, tile: Vector2i) -> String:

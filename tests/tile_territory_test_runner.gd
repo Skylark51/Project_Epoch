@@ -48,6 +48,17 @@ func _run() -> void:
 		String(center_state.get("settlement_id", "")) == String(first_city.get("id", "")),
 		"도시와 중심 타일을 양방향 검증 가능한 형태로 연결한다."
 	)
+	_expect(
+		String(center_state.get("managing_settlement_id", ""))
+		== String(first_city.get("id", "")),
+		"도시 중심 타일의 관리 도시를 기록한다."
+	)
+	for tile_record in manager.managed_tiles(String(first_city.get("id", ""))):
+		_expect(
+			String(tile_record.get("managing_settlement_id", ""))
+			== String(first_city.get("id", "")),
+			"초기 영향권의 모든 타일은 한 도시에만 귀속된다."
+		)
 	var nearby_tile := _find_settleable_in_distance(
 		manager,
 		world_map,
@@ -94,6 +105,39 @@ func _run() -> void:
 		_expect(
 			manager.city_center_distance(first_tile, second_tile) == 3,
 			"정사각 타일 거리 계산은 체비쇼프 거리로 고정한다."
+		)
+		var first_id := String(first_city.get("id", ""))
+		var second_id := String(second_result.get("settlement", {}).get("id", ""))
+		var first_expansion: Dictionary = manager.expand_city_influence(
+			world_map,
+			first_id,
+			2
+		)
+		var second_expansion: Dictionary = manager.expand_city_influence(
+			world_map,
+			second_id,
+			2
+		)
+		_expect(
+			bool(first_expansion.get("ok", false))
+			and int(first_expansion.get("influence_radius", 0)) == 2,
+			"첫 도시 영향권을 최대 반경 2까지 확장한다."
+		)
+		_expect(
+			bool(second_expansion.get("ok", false))
+			and int(second_expansion.get("influence_radius", 0)) == 2,
+			"인접 도시도 겹치지 않는 타일만 반경 2까지 확장한다."
+		)
+		var first_claims := _managed_tile_keys(manager, world_map, first_id)
+		var second_claims := _managed_tile_keys(manager, world_map, second_id)
+		_expect(
+			_no_shared_keys(first_claims, second_claims),
+			"같은 타일이 두 도시 영향권에 중복 귀속되지 않는다."
+		)
+		var borders: Array[Dictionary] = manager.border_edges(world_map)
+		_expect(
+			_has_border_between(borders, first_id, second_id, "national_border"),
+			"서로 다른 국가의 도시 영향권 사이에 타일 단위 국경을 만든다."
 		)
 	var duplicate_capital: Dictionary = manager.found_initial_city(
 		world_map,
@@ -217,6 +261,48 @@ func _find_foundable_at_exact_distance(
 func _contains_error_prefix(errors: Array, prefix: String) -> bool:
 	for error_value in errors:
 		if String(error_value).begins_with(prefix):
+			return true
+	return false
+
+
+func _managed_tile_keys(
+	manager,
+	world_map,
+	settlement_id: String
+) -> Dictionary:
+	var result := {}
+	for tile_record in manager.managed_tiles(settlement_id):
+		var key := str(
+			int(tile_record.get("row", -1)) * int(world_map.width)
+			+ int(tile_record.get("column", -1))
+		)
+		result[key] = true
+	return result
+
+
+func _no_shared_keys(first: Dictionary, second: Dictionary) -> bool:
+	for key in first.keys():
+		if second.has(key):
+			return false
+	return true
+
+
+func _has_border_between(
+	borders: Array[Dictionary],
+	first_id: String,
+	second_id: String,
+	kind: String
+) -> bool:
+	for border in borders:
+		var edge_first := String(border.get("first_settlement_id", ""))
+		var edge_second := String(border.get("second_settlement_id", ""))
+		if (
+			String(border.get("kind", "")) == kind
+			and (
+				(edge_first == first_id and edge_second == second_id)
+				or (edge_first == second_id and edge_second == first_id)
+			)
+		):
 			return true
 	return false
 
