@@ -1,6 +1,7 @@
 class_name StrategicMap
 extends Control
 
+
 signal province_selected(province_id: int)
 signal selection_changed(province_ids: Array[int])
 signal province_dropped(from_id: int, to_id: int)
@@ -9,19 +10,53 @@ signal city_selected(city_id: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
 
-enum InputState { IDLE, CHOOSING_MOVE_TARGET, CHOOSING_ATTACK_TARGET, SELECTING_PEACE_TERMS, DRAGGING_MAP, MODAL_OPEN }
+
+enum InputState {
+    IDLE,
+    CHOOSING_MOVE_TARGET,
+    CHOOSING_ATTACK_TARGET,
+    SELECTING_PEACE_TERMS,
+    DRAGGING_MAP,
+    MODAL_OPEN
+}
+
 
 const MODE_LABELS := {
-    "political": "정치", "relations": "외교 관계", "war": "전쟁", "economy": "경제",
-    "population": "인구", "development": "개발도", "manpower": "인력", "stability": "안정도",
-    "revolt": "반란 위험", "terrain": "지형", "fort": "요새", "supply": "보급"
+    "political": "정치",
+    "relations": "외교 관계",
+    "war": "전쟁",
+    "economy": "경제",
+    "population": "인구",
+    "development": "개발도",
+    "manpower": "인력",
+    "stability": "안정도",
+    "revolt": "반란 위험",
+    "terrain": "지형",
+    "fort": "요새",
+    "supply": "보급"
 }
-const WorldMapDataScript = preload("res://src/map/world_map_data.gd")
 
-const TERRAIN_COLORS := {
-    "plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"),
-    "coast": Color("#58788a"), "coastal_water": Color("#1d4b60"), "deep_water": Color("#102f42")
-}
+const WORLD_LABELS := [
+    ["중국 대륙", 105.0, 37.0, false],
+    ["한반도", 127.3, 38.2, false],
+    ["일본 열도", 137.8, 37.0, false],
+    ["황해", 123.5, 35.0, true],
+    ["동해", 132.7, 40.0, true],
+    ["동중국해", 125.0, 28.0, true]
+]
+
+const WorldMapDataScript = preload("res://src/map/world_map_data.gd")
+const StrategicMapGeometryScript = preload(
+    "res://src/map/strategic_map_geometry.gd"
+)
+const StrategicMapPaletteScript = preload(
+    "res://src/map/strategic_map_palette.gd"
+)
+
+const PICK_BUCKET_SIZE := 160.0
+
+
+# Runtime snapshot ------------------------------------------------------------
 
 var provinces: Dictionary = {}
 var map_tiles: Array = []
@@ -33,46 +68,64 @@ var armies: Dictionary = {}
 var relations: Dictionary = {}
 var wars: Array = []
 var player_country_id := ""
+
+
+# Selection and command interaction -----------------------------------------
+
 var selected_province_id := -1
 var selected_province_ids: Array[int] = []
+var command_source_id := -1
+var map_mode := "political"
+var input_state: InputState = InputState.IDLE
+
 var _selection_dragging := false
 var _selection_origin := Vector2.ZERO
 var _selection_current := Vector2.ZERO
 var _selection_additive := false
 var _command_drag := false
 var _drag_source_id := -1
-var command_source_id := -1
-var map_mode := "political"
-var input_state: InputState = InputState.IDLE
+var _command_paths: Array[Dictionary] = []
+var _peace_demands: Array[int] = []
+var _hovered_id := -1
+
+
+# Camera and drag state -------------------------------------------------------
+
 var zoom := 1.0
 var pan := Vector2.ZERO
 var min_zoom := 0.05
 var max_zoom := 8.0
+
 var _drag_origin := Vector2.ZERO
 var _pan_origin := Vector2.ZERO
 var _drag_button := MOUSE_BUTTON_NONE
 var _did_drag := false
 var _state_before_drag: InputState = InputState.IDLE
-var _hovered_id := -1
-var _command_paths: Array[Dictionary] = []
-var _peace_demands: Array[int] = []
+
+
+# Rendering and spatial indexes ---------------------------------------------
+
 var _world_rect := Rect2(0, 0, 800, 560)
 var _spatial_buckets: Dictionary = {}
 var _tile_spatial_buckets: Dictionary = {}
+var _screen_text_commands: Array[Dictionary] = []
+
 var debug_map_enabled := false
 var show_chunk_boundaries := false
 var show_coast_highlight := false
 var show_region_ids := false
 var visible_chunk_count := 0
 var last_rendered_tile_count := 0
-var _screen_text_commands: Array[Dictionary] = []
-const PICK_BUCKET_SIZE := 160.0
+
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
     focus_mode = Control.FOCUS_ALL
     clip_contents = true
     resized.connect(_clamp_pan)
+
+
+# Public map contract ---------------------------------------------------------
 
 func set_snapshot(snapshot: Dictionary) -> void:
     provinces = snapshot.get("provinces", {}).duplicate(true)
@@ -84,17 +137,12 @@ func set_snapshot(snapshot: Dictionary) -> void:
     wars = snapshot.get("wars", []).duplicate(true)
     player_country_id = String(snapshot.get("player_country_id", ""))
     world_map_id = String(snapshot.get("world_map_id", ""))
-    if not world_map_id.is_empty():
-        if world_map == null:
-            world_map = WorldMapDataScript.new()
-            if not world_map.load_default():
-                push_error("Strategic map fell back to legacy geometry: %s" % world_map.error_message)
-                world_map = null
-        if world_map != null:
-            world_map.bind_runtime_provinces(provinces)
+
+    _load_world_map_if_needed()
     _recalculate_world_rect()
     _rebuild_spatial_index()
     queue_redraw()
+
 
 func set_mode(value: String) -> void:
     if not MODE_LABELS.has(value):
@@ -102,13 +150,16 @@ func set_mode(value: String) -> void:
     map_mode = value
     queue_redraw()
 
+
 func mode_label() -> String:
     return String(MODE_LABELS.get(map_mode, map_mode))
 
-func set_interaction_state(value: InputState, source_id := -1) -> void:
+
+func set_interaction_state(value: InputState, source_id: int = -1) -> void:
     input_state = value
     command_source_id = source_id
     queue_redraw()
+
 
 func clear_interaction() -> void:
     input_state = InputState.IDLE
@@ -116,101 +167,213 @@ func clear_interaction() -> void:
     _peace_demands.clear()
     queue_redraw()
 
+
 func set_command_paths(paths: Array) -> void:
     _command_paths.clear()
-    for value in paths:
-        if value is Dictionary:
-            _command_paths.append(value.duplicate(true))
+    for path_value in paths:
+        if path_value is Dictionary:
+            _command_paths.append(path_value.duplicate(true))
     queue_redraw()
 
-func set_peace_demands(ids: Array[int]) -> void:
-    _peace_demands = ids.duplicate()
+
+func set_peace_demands(province_ids: Array[int]) -> void:
+    _peace_demands = province_ids.duplicate()
     queue_redraw()
+
+
+func set_selected_provinces(province_ids: Array[int]) -> void:
+    selected_province_ids = province_ids.duplicate()
+    if selected_province_ids.is_empty():
+        selected_province_id = -1
+    else:
+        selected_province_id = selected_province_ids.back()
+
+    selection_changed.emit(selected_province_ids.duplicate())
+    if selected_province_id != -1:
+        province_selected.emit(selected_province_id)
+    queue_redraw()
+
 
 func frame_world() -> void:
-    if size.x <= 1.0 or size.y <= 1.0:
+    var camera := StrategicMapGeometryScript.frame_world(
+        size,
+        _world_rect,
+        min_zoom
+    )
+    if camera.is_empty():
         return
-    var zx := size.x / maxf(_world_rect.size.x + 120.0, 1.0)
-    var zy := size.y / maxf(_world_rect.size.y + 120.0, 1.0)
-    zoom = clampf(minf(zx, zy), min_zoom, 1.8)
-    pan = size * 0.5 - (_world_rect.position + _world_rect.size * 0.5) * zoom
+
+    zoom = float(camera.get("zoom", zoom))
+    pan = Vector2(camera.get("pan", pan))
     _clamp_pan()
     queue_redraw()
+
 
 func focus_province(province_id: int) -> void:
     var province: Dictionary = provinces.get(province_id, {})
     if province.is_empty():
         return
-    var center := _province_center(province)
-    pan = size * 0.5 - center * zoom
+
+    pan = StrategicMapGeometryScript.focus_pan(
+        size,
+        _province_center(province),
+        zoom
+    )
     _clamp_pan()
     queue_redraw()
 
-func nudge_camera(delta:Vector2) -> void:
-    pan+=delta; _clamp_pan(); queue_redraw()
+
+func go_to_lonlat(
+    longitude: float,
+    latitude: float,
+    target_zoom: float = 1.2
+) -> void:
+    if world_map == null:
+        return
+
+    zoom = clampf(target_zoom, min_zoom, max_zoom)
+    pan = StrategicMapGeometryScript.focus_pan(
+        size,
+        world_map.world_from_lonlat(longitude, latitude),
+        zoom
+    )
+    _clamp_pan()
+    queue_redraw()
+
+
+func nudge_camera(delta: Vector2) -> void:
+    pan += delta
+    _clamp_pan()
+    queue_redraw()
+
+
+func export_world_map_png(
+    path: String = "user://east_asia_world_map.png"
+) -> Error:
+    if world_map == null or world_map.overview_texture == null:
+        return ERR_UNAVAILABLE
+    return world_map.overview_texture.get_image().save_png(path)
+
+
+# Input ----------------------------------------------------------------------
 
 func _gui_input(event: InputEvent) -> void:
     if input_state == InputState.MODAL_OPEN:
-        accept_event(); return
+        accept_event()
+        return
+
     if event is InputEventKey and event.pressed:
-        var key := event as InputEventKey
-        if key.keycode == KEY_F6:
-            debug_map_enabled = not debug_map_enabled
-            queue_redraw(); accept_event()
-        elif key.keycode == KEY_F7:
-            show_coast_highlight = not show_coast_highlight
-            queue_redraw(); accept_event()
-        elif key.keycode == KEY_F8:
-            show_chunk_boundaries = not show_chunk_boundaries
-            queue_redraw(); accept_event()
-        elif key.keycode == KEY_F9:
-            show_region_ids = not show_region_ids
-            queue_redraw(); accept_event()
-        elif key.keycode == KEY_HOME:
-            frame_world(); accept_event()
+        _handle_key_input(event)
     elif event is InputEventMouseButton:
-        var button := event as InputEventMouseButton
-        if button.button_index == MOUSE_BUTTON_WHEEL_UP and button.pressed:
-            _zoom_at(button.position, 1.14); accept_event()
-        elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN and button.pressed:
-            _zoom_at(button.position, 1.0 / 1.14); accept_event()
-        elif button.button_index == MOUSE_BUTTON_LEFT:
-            if button.pressed:
-                var province_id := _province_at(button.position)
-                if button.ctrl_pressed and province_id != -1 and input_state == InputState.IDLE:
-                    _command_drag = true; _drag_source_id = province_id; _selection_origin = button.position; _selection_current = button.position
-                else:
-                    _selection_additive = button.shift_pressed
-                    _begin_map_drag(button.button_index, button.position)
-            elif _command_drag:
-                var target_id := _province_at(button.position)
-                if target_id != -1 and target_id != _drag_source_id: province_dropped.emit(_drag_source_id, target_id)
-                _command_drag = false; _drag_source_id = -1; queue_redraw()
-            else:
-                _finish_map_drag(button.button_index, button.position)
-            accept_event()
-        elif button.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
-            if button.pressed:
-                _begin_map_drag(button.button_index, button.position)
-            else:
-                _finish_map_drag(button.button_index, button.position)
-            accept_event()
+        _handle_mouse_button(event)
     elif event is InputEventMouseMotion:
-        var motion := event as InputEventMouseMotion
-        if _command_drag:
-            _selection_current = motion.position; queue_redraw(); accept_event()
-        elif _selection_dragging:
-            _selection_current = motion.position; queue_redraw(); accept_event()
-        elif _drag_button != MOUSE_BUTTON_NONE:
-            if not _did_drag and motion.position.distance_to(_drag_origin) > 5.0:
-                _state_before_drag = input_state; _did_drag = true; input_state = InputState.DRAGGING_MAP
-            if _did_drag:
-                pan = _pan_origin + motion.position - _drag_origin; _clamp_pan(); queue_redraw()
+        _handle_mouse_motion(event)
+
+
+func _handle_key_input(event: InputEventKey) -> void:
+    match event.keycode:
+        KEY_F6:
+            debug_map_enabled = not debug_map_enabled
+        KEY_F7:
+            show_coast_highlight = not show_coast_highlight
+        KEY_F8:
+            show_chunk_boundaries = not show_chunk_boundaries
+        KEY_F9:
+            show_region_ids = not show_region_ids
+        KEY_HOME:
+            frame_world()
             accept_event()
+            return
+        _:
+            return
+
+    queue_redraw()
+    accept_event()
+
+
+func _handle_mouse_button(event: InputEventMouseButton) -> void:
+    if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+        _zoom_at(event.position, 1.14)
+        accept_event()
+        return
+
+    if event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+        _zoom_at(event.position, 1.0 / 1.14)
+        accept_event()
+        return
+
+    if event.button_index == MOUSE_BUTTON_LEFT:
+        _handle_left_button(event)
+        accept_event()
+        return
+
+    if event.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
+        if event.pressed:
+            _begin_map_drag(event.button_index, event.position)
         else:
-            var next_hover := _province_at(motion.position)
-            if next_hover != _hovered_id:
-                _hovered_id = next_hover; tooltip_changed.emit(_tooltip_for(next_hover), motion.global_position); queue_redraw()
+            _finish_map_drag(event.button_index, event.position)
+        accept_event()
+
+
+func _handle_left_button(event: InputEventMouseButton) -> void:
+    if event.pressed:
+        var province_id := _province_at(event.position)
+        if (
+            event.ctrl_pressed
+            and province_id != -1
+            and input_state == InputState.IDLE
+        ):
+            _command_drag = true
+            _drag_source_id = province_id
+            _selection_origin = event.position
+            _selection_current = event.position
+            return
+
+        _selection_additive = event.shift_pressed
+        _begin_map_drag(event.button_index, event.position)
+        return
+
+    if _command_drag:
+        var target_id := _province_at(event.position)
+        if target_id != -1 and target_id != _drag_source_id:
+            province_dropped.emit(_drag_source_id, target_id)
+        _command_drag = false
+        _drag_source_id = -1
+        queue_redraw()
+        return
+
+    _finish_map_drag(event.button_index, event.position)
+
+
+func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
+    if _command_drag:
+        _selection_current = event.position
+        queue_redraw()
+        accept_event()
+        return
+
+    if _selection_dragging:
+        _selection_current = event.position
+        queue_redraw()
+        accept_event()
+        return
+
+    if _drag_button != MOUSE_BUTTON_NONE:
+        _continue_map_drag(event.position)
+        accept_event()
+        return
+
+    var next_hovered_id := _province_at(event.position)
+    if next_hovered_id == _hovered_id:
+        return
+
+    _hovered_id = next_hovered_id
+    tooltip_changed.emit(
+        _tooltip_for(next_hovered_id),
+        event.global_position
+    )
+    queue_redraw()
+
 
 func _begin_map_drag(button: MouseButton, position: Vector2) -> void:
     _drag_button = button
@@ -218,54 +381,111 @@ func _begin_map_drag(button: MouseButton, position: Vector2) -> void:
     _pan_origin = pan
     _did_drag = false
 
+
+func _continue_map_drag(position: Vector2) -> void:
+    if not _did_drag and position.distance_to(_drag_origin) > 5.0:
+        _state_before_drag = input_state
+        _did_drag = true
+        input_state = InputState.DRAGGING_MAP
+
+    if not _did_drag:
+        return
+
+    pan = _pan_origin + position - _drag_origin
+    _clamp_pan()
+    queue_redraw()
+
+
 func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
     if _drag_button != button:
         return
+
     var did_drag := _did_drag
     _drag_button = MOUSE_BUTTON_NONE
+
     if input_state == InputState.DRAGGING_MAP:
         input_state = _state_before_drag
+
     if did_drag:
         return
+
     if button == MOUSE_BUTTON_RIGHT:
         _handle_target_click(_province_at(position))
-    elif button == MOUSE_BUTTON_LEFT:
+        return
+
+    if button == MOUSE_BUTTON_LEFT:
         var clicked_city := _city_at(position)
         if not clicked_city.is_empty():
             city_selected.emit(clicked_city)
-        var province_id := _province_at(position)
-        if input_state in [InputState.CHOOSING_MOVE_TARGET, InputState.CHOOSING_ATTACK_TARGET, InputState.SELECTING_PEACE_TERMS]:
-            _handle_target_click(province_id)
-        else:
-            _selection_origin = position
-            _finish_selection(position)
-func _finish_selection(position: Vector2) -> void:
-    _selection_current = position; _selection_dragging = false
-    var next: Array[int] = []
-    if _selection_additive: next.assign(selected_province_ids)
-    if _selection_origin.distance_to(position) < 7.0:
-        var id := _province_at(position)
-        if id != -1:
-            if _selection_additive and id in next: next.erase(id)
-            elif id not in next: next.append(id)
-    else:
-        var rect := Rect2(_selection_origin, position - _selection_origin).abs()
-        for id_value in provinces.keys():
-            var id := int(id_value)
-            var screen_center := _province_center(provinces[id]) * zoom + pan
-            if rect.has_point(screen_center) and id not in next: next.append(id)
-    set_selected_provinces(next)
 
-func set_selected_provinces(ids: Array[int]) -> void:
-    selected_province_ids = ids.duplicate()
-    selected_province_id = selected_province_ids.back() if not selected_province_ids.is_empty() else -1
-    selection_changed.emit(selected_province_ids.duplicate())
-    if selected_province_id != -1: province_selected.emit(selected_province_id)
-    queue_redraw()
+        var province_id := _province_at(position)
+        if input_state in [
+            InputState.CHOOSING_MOVE_TARGET,
+            InputState.CHOOSING_ATTACK_TARGET,
+            InputState.SELECTING_PEACE_TERMS
+        ]:
+            _handle_target_click(province_id)
+            return
+
+        _selection_origin = position
+        _finish_selection(position)
+
+
+func _finish_selection(position: Vector2) -> void:
+    _selection_current = position
+    _selection_dragging = false
+
+    var next_selection: Array[int] = []
+    if _selection_additive:
+        next_selection.assign(selected_province_ids)
+
+    if _selection_origin.distance_to(position) < 7.0:
+        _toggle_clicked_province(position, next_selection)
+    else:
+        _append_provinces_in_rectangle(position, next_selection)
+
+    set_selected_provinces(next_selection)
+
+
+func _toggle_clicked_province(
+    position: Vector2,
+    next_selection: Array[int]
+) -> void:
+    var province_id := _province_at(position)
+    if province_id == -1:
+        return
+
+    if _selection_additive and province_id in next_selection:
+        next_selection.erase(province_id)
+    elif province_id not in next_selection:
+        next_selection.append(province_id)
+
+
+func _append_provinces_in_rectangle(
+    position: Vector2,
+    next_selection: Array[int]
+) -> void:
+    var selection_rect := Rect2(
+        _selection_origin,
+        position - _selection_origin
+    ).abs()
+
+    for province_id_value in provinces.keys():
+        var province_id := int(province_id_value)
+        var screen_center := (
+            _province_center(provinces[province_id]) * zoom + pan
+        )
+        if (
+            selection_rect.has_point(screen_center)
+            and province_id not in next_selection
+        ):
+            next_selection.append(province_id)
+
 
 func _handle_target_click(province_id: int) -> void:
     if province_id == -1:
         return
+
     if input_state == InputState.SELECTING_PEACE_TERMS:
         if province_id in _peace_demands:
             _peace_demands.erase(province_id)
@@ -274,66 +494,141 @@ func _handle_target_click(province_id: int) -> void:
         command_target_selected.emit(province_id)
         queue_redraw()
         return
+
     if province_id != command_source_id:
         command_target_selected.emit(province_id)
 
+
+# Camera calculations --------------------------------------------------------
+
 func _zoom_at(screen_point: Vector2, factor: float) -> void:
-    var before := (screen_point - pan) / zoom
-    zoom = clampf(zoom * factor, min_zoom, max_zoom)
-    pan = screen_point - before * zoom
+    var camera := StrategicMapGeometryScript.zoom_at(
+        screen_point,
+        factor,
+        pan,
+        zoom,
+        min_zoom,
+        max_zoom
+    )
+    zoom = float(camera.get("zoom", zoom))
+    pan = Vector2(camera.get("pan", pan))
     _clamp_pan()
     camera_changed.emit(zoom)
     queue_redraw()
 
+
 func _clamp_pan() -> void:
-    if size.x <= 0.0 or size.y <= 0.0:
-        return
-    var margin := 90.0
-    var scaled_min := _world_rect.position * zoom
-    var scaled_max := _world_rect.end * zoom
-    pan.x = clampf(pan.x, size.x - scaled_max.x - margin, -scaled_min.x + margin)
-    pan.y = clampf(pan.y, size.y - scaled_max.y - margin, -scaled_min.y + margin)
+    pan = StrategicMapGeometryScript.clamp_pan(
+        pan,
+        size,
+        _world_rect,
+        zoom
+    )
+
 
 func _screen_to_world(point: Vector2) -> Vector2:
-    return (point - pan) / zoom
+    return StrategicMapGeometryScript.screen_to_world(point, pan, zoom)
+
+
+# Picking --------------------------------------------------------------------
 
 func _city_at(screen_point: Vector2) -> String:
     if world_map == null:
         return ""
+
     var world_position := _screen_to_world(screen_point)
     for city_value in world_map.cities:
-        if city_value is Dictionary and bool(city_value.get("enabled", true)) and bool(city_value.get("inBounds", false)):
-            var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
-            if world_position.distance_to(position) <= 9.0 / zoom:
-                return String(city_value.get("id", ""))
+        if city_value is not Dictionary:
+            continue
+
+        var city: Dictionary = city_value
+        if not bool(city.get("enabled", true)):
+            continue
+        if not bool(city.get("inBounds", false)):
+            continue
+
+        var position := Vector2(
+            float(city.get("mapX", 0.0)),
+            float(city.get("mapY", 0.0))
+        ) * world_map.tile_size
+        if world_position.distance_to(position) <= 9.0 / zoom:
+            return String(city.get("id", ""))
+
     return ""
 
+
 func _province_at(screen_point: Vector2) -> int:
-    var world := _screen_to_world(screen_point)
+    var world_position := _screen_to_world(screen_point)
+
     if world_map != null:
-        var tile := world_map.tile_at_world(world)
+        var tile := world_map.tile_at_world(world_position)
         return world_map.province_id(tile.x, tile.y)
-    var cell := Vector2i(floori(world.x / PICK_BUCKET_SIZE), floori(world.y / PICK_BUCKET_SIZE))
+
+    var cell := Vector2i(
+        floori(world_position.x / PICK_BUCKET_SIZE),
+        floori(world_position.y / PICK_BUCKET_SIZE)
+    )
+
     if not map_tiles.is_empty():
-        var tile_candidates: Array = _tile_spatial_buckets.get(cell, [])
-        for tile_index_value in tile_candidates:
-            var tile: Dictionary = map_tiles[int(tile_index_value)]
-            var tile_polygon := _tile_polygon(tile)
-            if tile_polygon.size() >= 3 and Geometry2D.is_point_in_polygon(world, tile_polygon):
-                return -1 if bool(tile.get("water", false)) else int(tile.get("province_id", -1))
-        return -1
-    var candidates: Array = _spatial_buckets.get(cell, provinces.keys())
-    for id_value in candidates:
-        var id := int(id_value)
-        var polygon := _polygon_for(provinces[id])
-        if polygon.size() >= 3 and Geometry2D.is_point_in_polygon(world, polygon):
-            return id
+        return _province_from_tile_candidates(world_position, cell)
+    return _province_from_polygon_candidates(world_position, cell)
+
+
+func _province_from_tile_candidates(
+    world_position: Vector2,
+    cell: Vector2i
+) -> int:
+    var tile_candidates: Array = _tile_spatial_buckets.get(cell, [])
+    for tile_index_value in tile_candidates:
+        var tile: Dictionary = map_tiles[int(tile_index_value)]
+        var polygon := _tile_polygon(tile)
+        if (
+            polygon.size() >= 3
+            and Geometry2D.is_point_in_polygon(world_position, polygon)
+        ):
+            if bool(tile.get("water", false)):
+                return -1
+            return int(tile.get("province_id", -1))
     return -1
+
+
+func _province_from_polygon_candidates(
+    world_position: Vector2,
+    cell: Vector2i
+) -> int:
+    var candidates: Array = _spatial_buckets.get(cell, provinces.keys())
+    for province_id_value in candidates:
+        var province_id := int(province_id_value)
+        var polygon := _polygon_for(provinces[province_id])
+        if (
+            polygon.size() >= 3
+            and Geometry2D.is_point_in_polygon(world_position, polygon)
+        ):
+            return province_id
+    return -1
+
+
+# Rendering entrypoint -------------------------------------------------------
+
 func _draw() -> void:
     _screen_text_commands.clear()
     draw_rect(Rect2(Vector2.ZERO, size), Color("#0c1821"))
+
     draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
     var numeric_range := _robust_range(_numeric_values(map_mode))
+    _draw_map_body(numeric_range)
+    _draw_command_paths()
+    _draw_icons_and_labels()
+
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    _draw_screen_text_commands()
+    _draw_active_drag_feedback()
+
+    if debug_map_enabled and world_map != null:
+        _draw_map_debug_overlay()
+
+
+func _draw_map_body(numeric_range: Vector2) -> void:
     if world_map != null:
         _draw_world_map(numeric_range)
     elif map_tiles.is_empty():
@@ -342,260 +637,574 @@ func _draw() -> void:
     else:
         _draw_hex_tiles(numeric_range)
         _draw_region_labels()
-    _draw_command_paths()
-    _draw_icons_and_labels()
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-    _draw_screen_text_commands()
-    if _selection_dragging:
-        var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
-        draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
-        draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
-    if _command_drag:
-        draw_dashed_line(_selection_origin, _selection_current, Color("#f0c66b"), 3.0, 10.0, true)
-    if debug_map_enabled and world_map != null:
-        _draw_map_debug_overlay()
 
-func _queue_map_text(world_position: Vector2, text: String, font_size: int, color: Color, screen_offset := Vector2.ZERO, centered := false) -> void:
+
+func _draw_active_drag_feedback() -> void:
+    if _selection_dragging:
+        var selection_rect := Rect2(
+            _selection_origin,
+            _selection_current - _selection_origin
+        ).abs()
+        draw_rect(
+            selection_rect,
+            Color(0.35, 0.78, 0.88, 0.16),
+            true
+        )
+        draw_rect(selection_rect, Color("#6ec7d8"), false, 2.0)
+
+    if _command_drag:
+        draw_dashed_line(
+            _selection_origin,
+            _selection_current,
+            Color("#f0c66b"),
+            3.0,
+            10.0,
+            true
+        )
+
+
+# Screen-space text ----------------------------------------------------------
+
+func _queue_map_text(
+    world_position: Vector2,
+    text: String,
+    font_size: int,
+    color: Color,
+    screen_offset: Vector2 = Vector2.ZERO,
+    centered: bool = false
+) -> void:
     if text.is_empty():
         return
+
     _screen_text_commands.append({
         "world_position": world_position,
         "text": text,
         "font_size": font_size,
         "color": color,
         "screen_offset": screen_offset,
-        "centered": centered,
+        "centered": centered
     })
+
 
 func _draw_screen_text_commands() -> void:
     var font := ThemeDB.fallback_font
     var visible_bounds := Rect2(Vector2.ZERO, size).grow(256.0)
+
     for command in _screen_text_commands:
-        var screen_position: Vector2 = Vector2(command.get("world_position", Vector2.ZERO)) * zoom + pan + Vector2(command.get("screen_offset", Vector2.ZERO))
+        var screen_position := (
+            Vector2(command.get("world_position", Vector2.ZERO)) * zoom
+            + pan
+            + Vector2(command.get("screen_offset", Vector2.ZERO))
+        )
         if not visible_bounds.has_point(screen_position):
             continue
+
         var text := String(command.get("text", ""))
         var font_size := int(command.get("font_size", 14))
         if bool(command.get("centered", false)):
-            var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+            var text_size := font.get_string_size(
+                text,
+                HORIZONTAL_ALIGNMENT_LEFT,
+                -1,
+                font_size
+            )
             screen_position.x -= text_size.x * 0.5
-        draw_string(font, screen_position, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(command.get("color", Color.WHITE)))
-func _draw_province_polygons(numeric_range: Vector2) -> void:
-    for id_value in provinces.keys():
-        var id := int(id_value)
-        var province: Dictionary = provinces[id]
-        var polygon := _polygon_for(province)
-        if polygon.size() < 3:
-            continue
-        draw_colored_polygon(polygon, _province_color(province, numeric_range))
-        var border := _border_color(province)
-        var width := 1.4 / zoom
-        if id in selected_province_ids or id == selected_province_id:
-            border = Color("#f4d58a")
-            width = 4.0 / zoom
-        elif id == _hovered_id:
-            border = Color("#d9e4e6")
-            width = 2.5 / zoom
-        draw_polyline(polygon + PackedVector2Array([polygon[0]]), border, width, true)
-        if id in _peace_demands:
-            draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 6.0 / zoom, true)
+
+        draw_string(
+            font,
+            screen_position,
+            text,
+            HORIZONTAL_ALIGNMENT_LEFT,
+            -1,
+            font_size,
+            Color(command.get("color", Color.WHITE))
+        )
+
+
+# Geographic world-map rendering -------------------------------------------
 
 func _draw_world_map(_numeric_range: Vector2) -> void:
-    var world_view := Rect2(_screen_to_world(Vector2.ZERO), size / zoom).grow(world_map.tile_size * 2.0)
+    var world_view := Rect2(
+        _screen_to_world(Vector2.ZERO),
+        size / zoom
+    ).grow(world_map.tile_size * 2.0)
     var chunks := world_map.visible_chunk_bounds(world_view)
+
     visible_chunk_count = chunks.size.x * chunks.size.y
-    last_rendered_tile_count = visible_chunk_count * world_map.chunk_size * world_map.chunk_size
-    var chunk_world_size := float(world_map.chunk_size) * world_map.tile_size
+    last_rendered_tile_count = (
+        visible_chunk_count
+        * world_map.chunk_size
+        * world_map.chunk_size
+    )
+
     if zoom < 0.32 and world_map.overview_texture != null:
-        var overview := world_map.overview_texture_for_mode(map_mode, countries, provinces, player_country_id, relations, wars)
-        draw_texture_rect(overview, world_map.world_rect(), false)
-        last_rendered_tile_count = 0
+        _draw_world_overview()
     else:
-        for chunk_y in range(chunks.position.y, chunks.end.y):
-            for chunk_x in range(chunks.position.x, chunks.end.x):
-                var texture := world_map.chunk_texture(chunk_x, chunk_y, map_mode, countries, provinces, player_country_id, relations, wars)
-                var rect := Rect2(Vector2(float(chunk_x), float(chunk_y)) * chunk_world_size, Vector2.ONE * chunk_world_size)
-                draw_texture_rect(texture, rect, false)
-                if show_chunk_boundaries:
-                    draw_rect(rect, Color(0.95, 0.75, 0.25, 0.72), false, 1.0 / zoom)
+        _draw_visible_world_chunks(chunks)
         _draw_world_selection(world_view)
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
+
     _draw_world_labels()
     if show_region_ids:
         _draw_region_ids()
     _draw_cities()
 
+
+func _draw_world_overview() -> void:
+    var overview := world_map.overview_texture_for_mode(
+        map_mode,
+        countries,
+        provinces,
+        player_country_id,
+        relations,
+        wars
+    )
+    draw_texture_rect(overview, world_map.world_rect(), false)
+    last_rendered_tile_count = 0
+
+
+func _draw_visible_world_chunks(chunks: Rect2i) -> void:
+    var chunk_world_size := (
+        float(world_map.chunk_size) * world_map.tile_size
+    )
+
+    for chunk_y in range(chunks.position.y, chunks.end.y):
+        for chunk_x in range(chunks.position.x, chunks.end.x):
+            var texture := world_map.chunk_texture(
+                chunk_x,
+                chunk_y,
+                map_mode,
+                countries,
+                provinces,
+                player_country_id,
+                relations,
+                wars
+            )
+            var rect := Rect2(
+                Vector2(float(chunk_x), float(chunk_y)) * chunk_world_size,
+                Vector2.ONE * chunk_world_size
+            )
+            draw_texture_rect(texture, rect, false)
+
+            if show_chunk_boundaries:
+                draw_rect(
+                    rect,
+                    Color(0.95, 0.75, 0.25, 0.72),
+                    false,
+                    1.0 / zoom
+                )
+
+
 func _draw_world_selection(world_view: Rect2) -> void:
     if selected_province_ids.is_empty() and _hovered_id == -1:
         return
-    var tile_min := world_map.tile_at_world(world_view.position)
-    var tile_max := world_map.tile_at_world(world_view.end)
-    for row in range(maxi(0, tile_min.y), mini(world_map.height - 1, tile_max.y) + 1):
-        for column in range(maxi(0, tile_min.x), mini(world_map.width - 1, tile_max.x) + 1):
+
+    var tile_minimum := world_map.tile_at_world(world_view.position)
+    var tile_maximum := world_map.tile_at_world(world_view.end)
+
+    for row in range(
+        maxi(0, tile_minimum.y),
+        mini(world_map.height - 1, tile_maximum.y) + 1
+    ):
+        for column in range(
+            maxi(0, tile_minimum.x),
+            mini(world_map.width - 1, tile_maximum.x) + 1
+        ):
             var province_id := world_map.province_id(column, row)
-            if province_id in selected_province_ids or province_id == _hovered_id:
-                var color := Color(0.96, 0.83, 0.45, 0.43) if province_id in selected_province_ids else Color(0.86, 0.91, 0.92, 0.28)
-                draw_rect(Rect2(Vector2(column, row) * world_map.tile_size, Vector2.ONE * world_map.tile_size), color, false, 1.5 / zoom)
+            if (
+                province_id not in selected_province_ids
+                and province_id != _hovered_id
+            ):
+                continue
+
+            var color := Color(0.86, 0.91, 0.92, 0.28)
+            if province_id in selected_province_ids:
+                color = Color(0.96, 0.83, 0.45, 0.43)
+
+            draw_rect(
+                Rect2(
+                    Vector2(column, row) * world_map.tile_size,
+                    Vector2.ONE * world_map.tile_size
+                ),
+                color,
+                false,
+                1.5 / zoom
+            )
+
 
 func _draw_coast_highlight(world_view: Rect2) -> void:
-    var tile_min := world_map.tile_at_world(world_view.position)
-    var tile_max := world_map.tile_at_world(world_view.end)
-    for row in range(maxi(0, tile_min.y), mini(world_map.height - 1, tile_max.y) + 1):
-        for column in range(maxi(0, tile_min.x), mini(world_map.width - 1, tile_max.x) + 1):
-            if world_map.terrain_id(column, row) == 3:
-                draw_rect(Rect2(Vector2(column, row) * world_map.tile_size, Vector2.ONE * world_map.tile_size), Color(1.0, 0.3, 0.25, 0.58), false, 1.0 / zoom)
+    var tile_minimum := world_map.tile_at_world(world_view.position)
+    var tile_maximum := world_map.tile_at_world(world_view.end)
+
+    for row in range(
+        maxi(0, tile_minimum.y),
+        mini(world_map.height - 1, tile_maximum.y) + 1
+    ):
+        for column in range(
+            maxi(0, tile_minimum.x),
+            mini(world_map.width - 1, tile_maximum.x) + 1
+        ):
+            if world_map.terrain_id(column, row) != 3:
+                continue
+
+            draw_rect(
+                Rect2(
+                    Vector2(column, row) * world_map.tile_size,
+                    Vector2.ONE * world_map.tile_size
+                ),
+                Color(1.0, 0.3, 0.25, 0.58),
+                false,
+                1.0 / zoom
+            )
+
 
 func _draw_world_labels() -> void:
     if zoom < 0.16:
         return
-    var labels := [
-        ["중국 대륙", 105.0, 37.0, false], ["한반도", 127.3, 38.2, false],
-        ["일본 열도", 137.8, 37.0, false], ["황해", 123.5, 35.0, true],
-        ["동해", 132.7, 40.0, true], ["동중국해", 125.0, 28.0, true]
-    ]
-    for label in labels:
-        var position := world_map.world_from_lonlat(float(label[1]), float(label[2]))
-        var text := String(label[0])
-        var color := Color(0.60, 0.80, 0.88, 0.62) if bool(label[3]) else Color(0.94, 0.88, 0.68, 0.56)
-        _queue_map_text(position, text, 18, color, Vector2.ZERO, true)
+
+    for label in WORLD_LABELS:
+        var position := world_map.world_from_lonlat(
+            float(label[1]),
+            float(label[2])
+        )
+        var color := Color(0.94, 0.88, 0.68, 0.56)
+        if bool(label[3]):
+            color = Color(0.60, 0.80, 0.88, 0.62)
+        _queue_map_text(
+            position,
+            String(label[0]),
+            18,
+            color,
+            Vector2.ZERO,
+            true
+        )
+
 
 func _draw_cities() -> void:
     for city_value in world_map.cities:
         if city_value is not Dictionary:
             continue
+
         var city: Dictionary = city_value
-        if not bool(city.get("enabled", true)) or not bool(city.get("inBounds", false)):
+        if not bool(city.get("enabled", true)):
             continue
-        var major := String(city.get("type", "")) == "major_city"
-        if zoom < 0.14 and not major:
+        if not bool(city.get("inBounds", false)):
             continue
-        var position := Vector2(float(city.get("mapX", 0.0)), float(city.get("mapY", 0.0))) * world_map.tile_size
-        var radius := (4.0 if major else 2.6) / zoom
+
+        var is_major_city := String(city.get("type", "")) == "major_city"
+        if zoom < 0.14 and not is_major_city:
+            continue
+
+        var position := Vector2(
+            float(city.get("mapX", 0.0)),
+            float(city.get("mapY", 0.0))
+        ) * world_map.tile_size
+        var radius := (4.0 if is_major_city else 2.6) / zoom
+
         draw_circle(position, radius, Color("#f4d58a"))
-        draw_arc(position, radius, 0.0, TAU, 12, Color("#1c1e1f"), 1.2 / zoom)
+        draw_arc(
+            position,
+            radius,
+            0.0,
+            TAU,
+            12,
+            Color("#1c1e1f"),
+            1.2 / zoom
+        )
+
         if zoom >= 0.52:
-            _queue_map_text(position, String(city.get("name", city.get("id", ""))), 12, Color("#f2ead8"), Vector2(6.0, -3.0))
+            _queue_map_text(
+                position,
+                String(city.get("name", city.get("id", ""))),
+                12,
+                Color("#f2ead8"),
+                Vector2(6.0, -3.0)
+            )
+
 
 func _draw_region_ids() -> void:
     var anchors: Dictionary = world_map.manifest.get("province_anchors", {})
     for source_id in anchors.keys():
         var anchor: Dictionary = anchors[source_id]
-        var position := Vector2(float(anchor.get("map_x", 0.0)), float(anchor.get("map_y", 0.0))) * world_map.tile_size
-        _queue_map_text(position, String(source_id), 10, Color("#f4d58a"))
+        var position := Vector2(
+            float(anchor.get("map_x", 0.0)),
+            float(anchor.get("map_y", 0.0))
+        ) * world_map.tile_size
+        _queue_map_text(
+            position,
+            String(source_id),
+            10,
+            Color("#f4d58a")
+        )
+
 
 func _draw_map_debug_overlay() -> void:
     var mouse_world := _screen_to_world(get_local_mouse_position())
     var tile := world_map.tile_at_world(mouse_world)
     var lonlat := world_map.lonlat_from_world(mouse_world)
-    var terrain_name := world_map.terrain_name(world_map.terrain_id(tile.x, tile.y))
+    var terrain_name := world_map.terrain_name(
+        world_map.terrain_id(tile.x, tile.y)
+    )
     var lines := [
         "MAP DEBUG  F6: panel  F7: coast  F8: chunks  F9: regions  Home: overview",
-        "tile %d,%d  lon %.3f°  lat %.3f°  terrain %s" % [tile.x, tile.y, lonlat.x, lonlat.y, terrain_name],
-        "zoom %.3f  visible chunks %d  detailed tiles <= %d" % [zoom, visible_chunk_count, last_rendered_tile_count]
+        "tile %d,%d  lon %.3f°  lat %.3f°  terrain %s" % [
+            tile.x,
+            tile.y,
+            lonlat.x,
+            lonlat.y,
+            terrain_name
+        ],
+        "zoom %.3f  visible chunks %d  detailed tiles <= %d" % [
+            zoom,
+            visible_chunk_count,
+            last_rendered_tile_count
+        ]
     ]
-    draw_rect(Rect2(12, 12, 610, 72), Color(0.02, 0.04, 0.06, 0.88), true)
-    for index in range(lines.size()):
-        draw_string(ThemeDB.fallback_font, Vector2(22, 33 + index * 20), lines[index], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#d9e4e6"))
 
-func go_to_lonlat(longitude: float, latitude: float, target_zoom := 1.2) -> void:
-    if world_map == null:
-        return
-    zoom = clampf(target_zoom, min_zoom, max_zoom)
-    pan = size * 0.5 - world_map.world_from_lonlat(longitude, latitude) * zoom
-    _clamp_pan()
-    queue_redraw()
+    draw_rect(
+        Rect2(12, 12, 610, 72),
+        Color(0.02, 0.04, 0.06, 0.88),
+        true
+    )
+    for line_index in range(lines.size()):
+        draw_string(
+            ThemeDB.fallback_font,
+            Vector2(22, 33 + line_index * 20),
+            lines[line_index],
+            HORIZONTAL_ALIGNMENT_LEFT,
+            -1,
+            13,
+            Color("#d9e4e6")
+        )
 
-func export_world_map_png(path := "user://east_asia_world_map.png") -> Error:
-    if world_map == null or world_map.overview_texture == null:
-        return ERR_UNAVAILABLE
-    return world_map.overview_texture.get_image().save_png(path)
+
+# Legacy polygon and tile rendering -----------------------------------------
+
+func _draw_province_polygons(numeric_range: Vector2) -> void:
+    for province_id_value in provinces.keys():
+        var province_id := int(province_id_value)
+        var province: Dictionary = provinces[province_id]
+        var polygon := _polygon_for(province)
+        if polygon.size() < 3:
+            continue
+
+        draw_colored_polygon(
+            polygon,
+            _province_color(province, numeric_range)
+        )
+
+        var border := _border_color(province)
+        var width := 1.4 / zoom
+        if (
+            province_id in selected_province_ids
+            or province_id == selected_province_id
+        ):
+            border = Color("#f4d58a")
+            width = 4.0 / zoom
+        elif province_id == _hovered_id:
+            border = Color("#d9e4e6")
+            width = 2.5 / zoom
+
+        draw_polyline(
+            polygon + PackedVector2Array([polygon[0]]),
+            border,
+            width,
+            true
+        )
+
+        if province_id in _peace_demands:
+            draw_polyline(
+                polygon + PackedVector2Array([polygon[0]]),
+                Color("#f0a25b"),
+                6.0 / zoom,
+                true
+            )
+
 
 func _draw_hex_tiles(numeric_range: Vector2) -> void:
     for tile_value in map_tiles:
         if tile_value is not Dictionary:
             continue
+
         var tile: Dictionary = tile_value
         var polygon := _tile_polygon(tile)
         if polygon.size() < 3:
             continue
+
         var is_water := bool(tile.get("water", false))
         var province_id := int(tile.get("province_id", -1))
-        var fill: Color = TERRAIN_COLORS.get(String(tile.get("terrain", "deep_water")), Color("#102f42")) if is_water else _tile_land_color(tile, provinces.get(province_id, {}), numeric_range)
-        var variation := int((int(tile.get("column", 0)) + int(tile.get("row", 0)) * 3) % 5) - 2
-        fill = fill.lightened(float(variation) * 0.018) if variation > 0 else fill.darkened(float(-variation) * 0.018)
-        draw_colored_polygon(polygon, fill)
-        var border := Color("#285568") if is_water else Color(0.08, 0.11, 0.12, 0.58)
-        var width := 0.65 / zoom
-        if not is_water and bool(tile.get("boundary", false)):
-            border = Color("#1b2224")
-            width = 1.35 / zoom
-        if not is_water and (province_id in selected_province_ids or province_id == selected_province_id):
-            border = Color("#f4d58a")
-            width = 2.5 / zoom
-        elif not is_water and province_id == _hovered_id:
-            border = Color("#d9e4e6")
-            width = 1.9 / zoom
-        draw_polyline(polygon + PackedVector2Array([polygon[0]]), border, width, true)
-        if not is_water and province_id in _peace_demands:
-            draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 3.2 / zoom, true)
+        var province: Dictionary = provinces.get(province_id, {})
+        var fill := StrategicMapPaletteScript.terrain_color(
+            String(tile.get("terrain", "deep_water")),
+            Color("#102f42")
+        )
+        if not is_water:
+            fill = _tile_land_color(tile, province, numeric_range)
 
-func _tile_land_color(tile: Dictionary, province: Dictionary, numeric_range: Vector2) -> Color:
-    if map_mode == "terrain":
-        return TERRAIN_COLORS.get(String(tile.get("terrain", province.get("terrain", "plains"))), Color("#6c735f"))
-    var color := _province_color(province, numeric_range)
-    if bool(tile.get("coastal", false)):
-        color = color.lerp(Color("#527787"), 0.08)
-    return color
+        var variation := (
+            int(tile.get("column", 0))
+            + int(tile.get("row", 0)) * 3
+        ) % 5 - 2
+        if variation > 0:
+            fill = fill.lightened(float(variation) * 0.018)
+        elif variation < 0:
+            fill = fill.darkened(float(-variation) * 0.018)
+
+        draw_colored_polygon(polygon, fill)
+        _draw_hex_tile_border(
+            tile,
+            polygon,
+            province_id,
+            is_water
+        )
+
+
+func _draw_hex_tile_border(
+    tile: Dictionary,
+    polygon: PackedVector2Array,
+    province_id: int,
+    is_water: bool
+) -> void:
+    var border := Color("#285568") if is_water else Color(0.08, 0.11, 0.12, 0.58)
+    var width := 0.65 / zoom
+
+    if not is_water and bool(tile.get("boundary", false)):
+        border = Color("#1b2224")
+        width = 1.35 / zoom
+
+    if (
+        not is_water
+        and (
+            province_id in selected_province_ids
+            or province_id == selected_province_id
+        )
+    ):
+        border = Color("#f4d58a")
+        width = 2.5 / zoom
+    elif not is_water and province_id == _hovered_id:
+        border = Color("#d9e4e6")
+        width = 1.9 / zoom
+
+    draw_polyline(
+        polygon + PackedVector2Array([polygon[0]]),
+        border,
+        width,
+        true
+    )
+
+    if not is_water and province_id in _peace_demands:
+        draw_polyline(
+            polygon + PackedVector2Array([polygon[0]]),
+            Color("#f0a25b"),
+            3.2 / zoom,
+            true
+        )
+
 
 func _draw_region_labels() -> void:
     if zoom < 0.5:
         return
+
     for label_value in map_labels:
         if label_value is not Dictionary:
             continue
+
         var label: Dictionary = label_value
-        var position_value = label.get("position", Vector2.ZERO)
-        var position := Vector2.ZERO
-        if position_value is Vector2:
-            position = position_value
-        elif position_value is Array and position_value.size() >= 2:
-            position = Vector2(float(position_value[0]), float(position_value[1]))
-        var text := String(label.get("text", ""))
-        var color := Color(0.56, 0.76, 0.84, 0.55) if String(label.get("kind", "")) == "sea" else Color(0.91, 0.85, 0.69, 0.30)
-        _queue_map_text(position, text, 19, color, Vector2.ZERO, true)
+        var position := _vector_from_value(label.get("position", Vector2.ZERO))
+        var color := Color(0.91, 0.85, 0.69, 0.30)
+        if String(label.get("kind", "")) == "sea":
+            color = Color(0.56, 0.76, 0.84, 0.55)
+
+        _queue_map_text(
+            position,
+            String(label.get("text", "")),
+            19,
+            color,
+            Vector2.ZERO,
+            true
+        )
+
 
 func _draw_grid() -> void:
     var start_x := int(floor(_world_rect.position.x / 80.0)) * 80
     var end_x := int(ceil(_world_rect.end.x / 80.0)) * 80
     var start_y := int(floor(_world_rect.position.y / 80.0)) * 80
     var end_y := int(ceil(_world_rect.end.y / 80.0)) * 80
+
     for x in range(start_x, end_x + 1, 80):
-        draw_line(Vector2(x, start_y), Vector2(x, end_y), Color(0.20, 0.28, 0.33, 0.18), 1.0 / zoom)
+        draw_line(
+            Vector2(x, start_y),
+            Vector2(x, end_y),
+            Color(0.20, 0.28, 0.33, 0.18),
+            1.0 / zoom
+        )
     for y in range(start_y, end_y + 1, 80):
-        draw_line(Vector2(start_x, y), Vector2(end_x, y), Color(0.20, 0.28, 0.33, 0.18), 1.0 / zoom)
+        draw_line(
+            Vector2(start_x, y),
+            Vector2(end_x, y),
+            Color(0.20, 0.28, 0.33, 0.18),
+            1.0 / zoom
+        )
+
+
+# Strategic overlays ---------------------------------------------------------
 
 func _draw_icons_and_labels() -> void:
-    for id_value in provinces.keys():
-        var id := int(id_value)
-        var province: Dictionary = provinces[id]
+    for province_id_value in provinces.keys():
+        var province_id := int(province_id_value)
+        var province: Dictionary = provinces[province_id]
         var center := _province_center(province)
-        var owner := String(province.get("owner", ""))
-        var country: Dictionary = countries.get(owner, {})
-        if int(country.get("capital_province", -1)) == id:
-            _draw_star(center + Vector2(0, -18), 7.0, Color("#f0c66b"))
+        var owner_id := String(province.get("owner", ""))
+        var country: Dictionary = countries.get(owner_id, {})
+
+        if int(country.get("capital_province", -1)) == province_id:
+            _draw_star(
+                center + Vector2(0, -18),
+                7.0,
+                Color("#f0c66b")
+            )
+
         if int(province.get("fort", 0)) > 0 and zoom >= 0.78:
-            draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#c5b28a"), true)
-            draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#3a3028"), false, 1.5 / zoom)
+            draw_rect(
+                Rect2(center + Vector2(24, -12), Vector2(12, 12)),
+                Color("#c5b28a"),
+                true
+            )
+            draw_rect(
+                Rect2(center + Vector2(24, -12), Vector2(12, 12)),
+                Color("#3a3028"),
+                false,
+                1.5 / zoom
+            )
+
         if zoom >= 0.72:
-            var label := String(province.get("name", "Province"))
             var font_size := 14 if zoom >= 1.35 else 11
-            _queue_map_text(center, label, font_size, Color("#f2ead8"), Vector2.ZERO, true)
+            _queue_map_text(
+                center,
+                String(province.get("name", "Province")),
+                font_size,
+                Color("#f2ead8"),
+                Vector2.ZERO,
+                true
+            )
+
         if zoom >= 0.58:
-            var amount := int(armies.get(id, province.get("army", 0)))
-            var badge := Rect2(center + Vector2(-17, 8), Vector2(34, 20))
+            var amount := int(
+                armies.get(province_id, province.get("army", 0))
+            )
+            var badge := Rect2(
+                center + Vector2(-17, 8),
+                Vector2(34, 20)
+            )
             draw_style_box(_badge_style(), badge)
-            _queue_map_text(badge.position + Vector2(7, 15), str(amount), 11, Color.WHITE)
+            _queue_map_text(
+                badge.position + Vector2(7, 15),
+                str(amount),
+                11,
+                Color.WHITE
+            )
+
 
 func _draw_command_paths() -> void:
     for path in _command_paths:
@@ -603,23 +1212,46 @@ func _draw_command_paths() -> void:
         var to_id := int(path.get("to_id", -1))
         if not provinces.has(from_id) or not provinces.has(to_id):
             continue
+
         var start := _province_center(provinces[from_id])
         var finish := _province_center(provinces[to_id])
-        var color := Color("#6ed7dd") if String(path.get("type", "move")) == "move" else Color("#ef806f")
-        draw_dashed_line(start, finish, color, 3.0 / zoom, 8.0 / zoom, true)
+        var color := Color("#6ed7dd")
+        if String(path.get("type", "move")) != "move":
+            color = Color("#ef806f")
+
+        draw_dashed_line(
+            start,
+            finish,
+            color,
+            3.0 / zoom,
+            8.0 / zoom,
+            true
+        )
+
         var direction := (finish - start).normalized()
         var side := direction.orthogonal()
         var tip := finish - direction * 18.0
-        var arrow := PackedVector2Array([finish, tip + side * 8.0, tip - side * 8.0])
+        var arrow := PackedVector2Array([
+            finish,
+            tip + side * 8.0,
+            tip - side * 8.0
+        ])
         draw_colored_polygon(arrow, color)
+
 
 func _draw_star(center: Vector2, radius: float, color: Color) -> void:
     var points := PackedVector2Array()
-    for i in range(10):
-        var angle := -PI * 0.5 + float(i) * PI / 5.0
-        var r := radius if i % 2 == 0 else radius * 0.44
-        points.append(center + Vector2(cos(angle), sin(angle)) * r)
+    for point_index in range(10):
+        var angle := -PI * 0.5 + float(point_index) * PI / 5.0
+        var point_radius := radius
+        if point_index % 2 != 0:
+            point_radius = radius * 0.44
+        points.append(
+            center
+            + Vector2(cos(angle), sin(angle)) * point_radius
+        )
     draw_colored_polygon(points, color)
+
 
 func _badge_style() -> StyleBoxFlat:
     var style := StyleBoxFlat.new()
@@ -629,175 +1261,208 @@ func _badge_style() -> StyleBoxFlat:
     style.set_corner_radius_all(5)
     return style
 
-func _province_color(province: Dictionary, robust_range: Vector2) -> Color:
-    var owner := String(province.get("owner", ""))
-    if map_mode == "political":
-        return Color(String(countries.get(owner, {}).get("color", "#6b7378")))
-    if map_mode == "relations":
-        if owner == player_country_id: return Color("#4f8a72")
-        if _at_war(player_country_id, owner): return Color("#9c4343")
-        var relation := _relation(player_country_id, owner)
-        if relation >= 25: return Color("#4d7f91")
-        if relation <= -25: return Color("#8f6447")
-        return Color("#777a70")
-    if map_mode == "war":
-        if owner == player_country_id: return Color("#3f7580")
-        return Color("#9b3e3e") if _at_war(player_country_id, owner) else Color("#4e5458")
-    if map_mode == "terrain":
-        return TERRAIN_COLORS.get(String(province.get("terrain", "plains")), Color("#6c735f"))
-    var value := _numeric_value(province, map_mode)
-    var t := inverse_lerp(robust_range.x, robust_range.y, clampf(value, robust_range.x, robust_range.y))
-    var low := Color("#27343b")
-    var high := Color("#d2a75f")
-    if map_mode in ["revolt"]:
-        high = Color("#b34c45")
-    elif map_mode in ["stability"]:
-        high = Color("#4d9a78")
-    elif map_mode == "fort":
-        high = Color("#9e87bd")
-    return low.lerp(high, t)
+
+# Pure calculation adapters --------------------------------------------------
+
+func _province_color(
+    province: Dictionary,
+    robust_range: Vector2
+) -> Color:
+    return StrategicMapPaletteScript.province_color(
+        province,
+        map_mode,
+        robust_range,
+        countries,
+        armies,
+        relations,
+        wars,
+        player_country_id
+    )
+
 
 func _border_color(province: Dictionary) -> Color:
-    var owner := String(province.get("owner", ""))
-    if owner == player_country_id:
-        return Color("#87b6ba")
-    if _at_war(player_country_id, owner):
-        return Color("#e0655b")
-    if _relation(player_country_id, owner) >= 25:
-        return Color("#6e9aa5")
-    return Color("#252a2d")
+    return StrategicMapPaletteScript.border_color(
+        province,
+        player_country_id,
+        relations,
+        wars
+    )
+
+
+func _tile_land_color(
+    tile: Dictionary,
+    province: Dictionary,
+    robust_range: Vector2
+) -> Color:
+    return StrategicMapPaletteScript.tile_land_color(
+        tile,
+        province,
+        map_mode,
+        robust_range,
+        countries,
+        armies,
+        relations,
+        wars,
+        player_country_id
+    )
+
 
 func _numeric_values(mode: String) -> Array[float]:
-    var result: Array[float] = []
-    for province in provinces.values():
-        result.append(_numeric_value(province, mode))
-    result.sort()
-    return result
+    return StrategicMapPaletteScript.numeric_values(
+        provinces,
+        mode,
+        countries,
+        armies
+    )
 
-func _robust_range(values: Array[float]) -> Vector2:
-    if values.is_empty(): return Vector2(0, 1)
-    var low_index := int(floor((values.size() - 1) * 0.08))
-    var high_index := int(ceil((values.size() - 1) * 0.92))
-    var low := values[low_index]
-    var high := values[high_index]
-    if is_equal_approx(low, high): high = low + 1.0
-    return Vector2(low, high)
 
 func _numeric_value(province: Dictionary, mode: String) -> float:
-    match mode:
-        "economy": return float(province.get("economy", 0))
-        "population": return log(1.0 + float(province.get("population", 0)))
-        "development": return float(province.get("development", 0))
-        "manpower": return float(province.get("manpower", province.get("population", 0) * 0.2))
-        "stability": return float(province.get("stability", countries.get(String(province.get("owner", "")), {}).get("stability", 50)))
-        "revolt": return float(province.get("revolt_risk", maxf(0.0, 100.0 - float(province.get("stability", 70)))))
-        "fort": return float(province.get("fort", 0))
-        "supply": return clampf(float(province.get("development", 0)) * 18.0 + float(province.get("economy", 0)) - float(armies.get(int(province.get("id", -1)), 0)) * 0.01, 0.0, 100.0)
-    return 0.0
+    return StrategicMapPaletteScript.numeric_value(
+        province,
+        mode,
+        countries,
+        armies
+    )
+
+
+func _robust_range(values: Array[float]) -> Vector2:
+    return StrategicMapGeometryScript.robust_range(values)
+
 
 func _polygon_for(province: Dictionary) -> PackedVector2Array:
-    var result := PackedVector2Array()
-    for point in province.get("polygon", []):
-        if point is Array and point.size() >= 2:
-            result.append(Vector2(float(point[0]), float(point[1])))
-        elif point is Vector2:
-            result.append(point)
-    return result
+    return StrategicMapGeometryScript.polygon_from(
+        province.get("polygon", [])
+    )
+
 
 func _tile_polygon(tile: Dictionary) -> PackedVector2Array:
-    var result := PackedVector2Array()
-    for point in tile.get("polygon", []):
-        if point is Array and point.size() >= 2:
-            result.append(Vector2(float(point[0]), float(point[1])))
-        elif point is Vector2:
-            result.append(point)
-    return result
+    return StrategicMapGeometryScript.polygon_from(
+        tile.get("polygon", [])
+    )
+
+
 func _province_center(province: Dictionary) -> Vector2:
-    var center_value = province.get("map_center", [])
-    if center_value is Array and center_value.size() >= 2:
-        return Vector2(float(center_value[0]), float(center_value[1]))
-    if center_value is Vector2:
-        return center_value
-    var polygon := _polygon_for(province)
-    if polygon.is_empty(): return Vector2.ZERO
-    var total := Vector2.ZERO
-    for point in polygon: total += point
-    return total / float(polygon.size())
+    return StrategicMapGeometryScript.province_center(province)
+
+
+func _pair_key(first_country_id: String, second_country_id: String) -> String:
+    return StrategicMapPaletteScript.pair_key(
+        first_country_id,
+        second_country_id
+    )
+
+
+func _relation(first_country_id: String, second_country_id: String) -> int:
+    return StrategicMapPaletteScript.relation(
+        first_country_id,
+        second_country_id,
+        relations
+    )
+
+
+func _at_war(first_country_id: String, second_country_id: String) -> bool:
+    return StrategicMapPaletteScript.at_war(
+        first_country_id,
+        second_country_id,
+        wars
+    )
+
+
+# Spatial index and data loading --------------------------------------------
+
+func _load_world_map_if_needed() -> void:
+    if world_map_id.is_empty():
+        return
+
+    if world_map == null:
+        world_map = WorldMapDataScript.new()
+        if not world_map.load_default():
+            push_error(
+                "Strategic map fell back to legacy geometry: %s"
+                % world_map.error_message
+            )
+            world_map = null
+
+    if world_map != null:
+        world_map.bind_runtime_provinces(provinces)
+
 
 func _rebuild_spatial_index() -> void:
     _spatial_buckets.clear()
     _tile_spatial_buckets.clear()
-    for id_value in provinces.keys():
-        var id := int(id_value)
-        var polygon := _polygon_for(provinces[id])
-        if polygon.is_empty():
-            continue
-        _add_polygon_to_buckets(_spatial_buckets, id, polygon)
+
+    for province_id_value in provinces.keys():
+        var province_id := int(province_id_value)
+        var polygon := _polygon_for(provinces[province_id])
+        StrategicMapGeometryScript.add_polygon_to_buckets(
+            _spatial_buckets,
+            province_id,
+            polygon,
+            PICK_BUCKET_SIZE
+        )
+
     for tile_index in range(map_tiles.size()):
         var tile_value = map_tiles[tile_index]
         if tile_value is not Dictionary:
             continue
-        var polygon := _tile_polygon(tile_value)
-        if polygon.is_empty():
-            continue
-        _add_polygon_to_buckets(_tile_spatial_buckets, tile_index, polygon)
 
-func _add_polygon_to_buckets(buckets: Dictionary, value: int, polygon: PackedVector2Array) -> void:
-    var bounds := Rect2(polygon[0], Vector2.ZERO)
-    for point in polygon:
-        bounds = bounds.expand(point)
-    var min_cell := Vector2i(floori(bounds.position.x / PICK_BUCKET_SIZE), floori(bounds.position.y / PICK_BUCKET_SIZE))
-    var max_cell := Vector2i(floori(bounds.end.x / PICK_BUCKET_SIZE), floori(bounds.end.y / PICK_BUCKET_SIZE))
-    for x in range(min_cell.x, max_cell.x + 1):
-        for y in range(min_cell.y, max_cell.y + 1):
-            var cell := Vector2i(x, y)
-            if not buckets.has(cell):
-                buckets[cell] = []
-            buckets[cell].append(value)
+        StrategicMapGeometryScript.add_polygon_to_buckets(
+            _tile_spatial_buckets,
+            tile_index,
+            _tile_polygon(tile_value),
+            PICK_BUCKET_SIZE
+        )
+
+
+func _add_polygon_to_buckets(
+    buckets: Dictionary,
+    value: int,
+    polygon: PackedVector2Array
+) -> void:
+    StrategicMapGeometryScript.add_polygon_to_buckets(
+        buckets,
+        value,
+        polygon,
+        PICK_BUCKET_SIZE
+    )
+
 
 func _recalculate_world_rect() -> void:
-    if world_map != null:
-        _world_rect = world_map.world_rect()
-        return
-    var first := true
-    if not map_tiles.is_empty():
-        for tile_value in map_tiles:
-            if tile_value is not Dictionary:
-                continue
-            for point in _tile_polygon(tile_value):
-                if first:
-                    _world_rect = Rect2(point, Vector2.ZERO)
-                    first = false
-                else:
-                    _world_rect = _world_rect.expand(point)
-        if not first:
-            return
-    for province in provinces.values():
-        for point in _polygon_for(province):
-            if first:
-                _world_rect = Rect2(point, Vector2.ZERO)
-                first = false
-            else:
-                _world_rect = _world_rect.expand(point)
-    if first:
-        _world_rect = Rect2(0, 0, 800, 560)
-func _pair_key(a: String, b: String) -> String:
-    return a + "|" + b if a < b else b + "|" + a
+    _world_rect = StrategicMapGeometryScript.calculate_world_rect(
+        provinces,
+        map_tiles,
+        world_map
+    )
 
-func _relation(a: String, b: String) -> int:
-    if a == b: return 100
-    return int(relations.get(_pair_key(a, b), 0))
 
-func _at_war(a: String, b: String) -> bool:
-    for war in wars:
-        if not war is Dictionary: continue
-        var attacker := String(war.get("attacker", ""))
-        var defender := String(war.get("defender", ""))
-        if (attacker == a and defender == b) or (attacker == b and defender == a): return true
-    return false
+func _vector_from_value(value: Variant) -> Vector2:
+    if value is Vector2:
+        return value
+    if value is Array and value.size() >= 2:
+        return Vector2(float(value[0]), float(value[1]))
+    return Vector2.ZERO
+
+
+# Tooltip --------------------------------------------------------------------
 
 func _tooltip_for(province_id: int) -> String:
-    if province_id == -1 or not provinces.has(province_id): return ""
+    if province_id == -1 or not provinces.has(province_id):
+        return ""
+
     var province: Dictionary = provinces[province_id]
-    var owner := String(province.get("owner", ""))
-    return "%s\n%s · 병력 %d\n인구 %s · 경제 %s · 요새 %s" % [String(province.get("name", "Province")), String(countries.get(owner, {}).get("name", owner)), int(armies.get(province_id, province.get("army", 0))), str(province.get("population", 0)), str(province.get("economy", 0)), str(province.get("fort", 0))]
+    var owner_id := String(province.get("owner", ""))
+    var owner_name := String(
+        countries.get(owner_id, {}).get("name", owner_id)
+    )
+    var army := int(
+        armies.get(province_id, province.get("army", 0))
+    )
+
+    return "%s\n%s · 병력 %d\n인구 %s · 경제 %s · 요새 %s" % [
+        String(province.get("name", "Province")),
+        owner_name,
+        army,
+        str(province.get("population", 0)),
+        str(province.get("economy", 0)),
+        str(province.get("fort", 0))
+    ]
