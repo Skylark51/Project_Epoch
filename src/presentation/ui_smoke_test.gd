@@ -23,6 +23,12 @@ func _run() -> void:
     await process_frame
     check(app.screens[app.ScreenState.START].visible, "start screen is visible immediately")
     check(not app.screens[app.ScreenState.GAME].visible, "game screen does not flash before selection")
+    var start_screen: Control = app.screens[app.ScreenState.START]
+    var classic_frame := start_screen.find_child("ClassicMenuFrame", true, false) as Control
+    var start_actions := start_screen.find_child("StartMenuActions", true, false) as VBoxContainer
+    check(classic_frame != null and classic_frame.size.x >= 600.0, "classic start screen frame has a strong visual hierarchy")
+    check(start_actions != null and start_actions.get_child_count() == 4, "classic start screen keeps all four menu actions")
+    check(start_screen.find_child("StartTitle", true, false) != null, "classic start screen exposes its title landmark")
     for resolution in [Vector2i(1280,720),Vector2i(1920,1080)]:
         root.size=resolution
         await process_frame

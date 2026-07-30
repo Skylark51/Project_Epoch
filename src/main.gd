@@ -231,60 +231,209 @@ func _build_screens() -> void:
 
 
 func _build_start() -> Control:
-    var root := _margin(48)
+    var root := Control.new()
+    root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+    var backdrop := ColorRect.new()
+    backdrop.color = Color("#090d10")
+    backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(backdrop)
+
+    var upper_glow := ColorRect.new()
+    upper_glow.color = Color("#12181b")
+    upper_glow.anchor_right = 1.0
+    upper_glow.anchor_bottom = 0.34
+    upper_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(upper_glow)
+
+    for side in [0.0, 1.0]:
+        var frame_line := ColorRect.new()
+        frame_line.color = Color("#54452d")
+        frame_line.anchor_left = side
+        frame_line.anchor_right = side
+        frame_line.anchor_top = 0.08
+        frame_line.anchor_bottom = 0.92
+        frame_line.offset_left = 42.0 if side == 0.0 else -43.0
+        frame_line.offset_right = 43.0 if side == 0.0 else -42.0
+        frame_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        root.add_child(frame_line)
+
     var center := CenterContainer.new()
+    center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     root.add_child(center)
 
-    var panel := PanelContainer.new()
-    panel.custom_minimum_size = Vector2(520, 560)
-    panel.add_theme_stylebox_override(
+    var outer_frame := PanelContainer.new()
+    outer_frame.name = "ClassicMenuFrame"
+    outer_frame.custom_minimum_size = Vector2(640, 636)
+    outer_frame.add_theme_stylebox_override(
         "panel",
-        _style("#17212a", "#8f7448", 2, 18)
+        _style("#0b0f11", "#5f4e31", 3, 5)
     )
-    center.add_child(panel)
+    center.add_child(outer_frame)
 
-    var box := VBoxContainer.new()
-    box.add_theme_constant_override("separation", 18)
-    panel.add_child(box)
+    var inner_frame := PanelContainer.new()
+    inner_frame.add_theme_stylebox_override(
+        "panel",
+        _style("#171b1d", "#b08e50", 1, 2)
+    )
+    outer_frame.add_child(inner_frame)
 
-    box.add_child(
+    var content_margin := MarginContainer.new()
+    content_margin.add_theme_constant_override("margin_left", 38)
+    content_margin.add_theme_constant_override("margin_right", 38)
+    content_margin.add_theme_constant_override("margin_top", 25)
+    content_margin.add_theme_constant_override("margin_bottom", 24)
+    inner_frame.add_child(content_margin)
+
+    var composition := VBoxContainer.new()
+    composition.add_theme_constant_override("separation", 10)
+    content_margin.add_child(composition)
+
+    composition.add_child(
         _label(
-            "◆  PROJECT EPOCH  ◆",
-            34,
-            Color("#d7bb79"),
+            "IMPERIUM · CHRONICA · ORIENTIS",
+            11,
+            Color("#8d7b5c"),
             HORIZONTAL_ALIGNMENT_CENTER
         )
     )
-    box.add_child(
+    composition.add_child(_classic_title_rule())
+
+    var title := _label(
+        "PROJECT EPOCH",
+        42,
+        Color("#dfc27a"),
+        HORIZONTAL_ALIGNMENT_CENTER
+    )
+    title.name = "StartTitle"
+    composition.add_child(title)
+    composition.add_child(
         _label(
-            "역사의 주도권은 지도 위에서 시작됩니다",
-            16,
-            Color("#aeb9bd"),
+            "동방의 연대기",
+            20,
+            Color("#c3b28d"),
             HORIZONTAL_ALIGNMENT_CENTER
         )
     )
-    box.add_child(HSeparator.new())
-    box.add_child(
-        _button(
-            "새 게임",
-            func(): _show(ScreenState.SCENARIO),
-            "primary",
-            58
+    composition.add_child(
+        _label(
+            "천하는 기록되고, 국가는 선택으로 남는다",
+            13,
+            Color("#7f8a89"),
+            HORIZONTAL_ALIGNMENT_CENTER
         )
     )
-    box.add_child(_button("불러오기", _load_game))
-    box.add_child(_button("설정", _settings))
-    box.add_child(_button("종료", func(): get_tree().quit()))
-    box.add_child(
+    composition.add_child(_classic_title_rule())
+
+    var actions := VBoxContainer.new()
+    actions.name = "StartMenuActions"
+    actions.add_theme_constant_override("separation", 8)
+    composition.add_child(actions)
+
+    var new_game := _start_menu_button(
+        "Ⅰ   새 연대기 시작",
+        func(): _show(ScreenState.SCENARIO),
+        true
+    )
+    new_game.name = "NewChronicleButton"
+    actions.add_child(new_game)
+
+    var continue_game := _start_menu_button(
+        "Ⅱ   연대기 이어가기",
+        _load_game
+    )
+    continue_game.name = "ContinueChronicleButton"
+    actions.add_child(continue_game)
+
+    var settings_button := _start_menu_button(
+        "Ⅲ   궁정 설정",
+        _settings
+    )
+    settings_button.name = "StartSettingsButton"
+    actions.add_child(settings_button)
+
+    var quit_button := _start_menu_button(
+        "Ⅳ   기록을 덮고 나가기",
+        func(): get_tree().quit()
+    )
+    quit_button.name = "StartQuitButton"
+    actions.add_child(quit_button)
+
+    composition.add_spacer(false)
+    composition.add_child(
         _label(
-            "Province 중심 대전략 · 데스크톱 고밀도 인터페이스",
+            "고대 동아시아 대전략 시뮬레이션",
             12,
-            Color("#74828a"),
+            Color("#81765f"),
+            HORIZONTAL_ALIGNMENT_CENTER
+        )
+    )
+    composition.add_child(
+        _label(
+            "CODEX EDITION  ·  BUILD 1000",
+            10,
+            Color("#555e5f"),
             HORIZONTAL_ALIGNMENT_CENTER
         )
     )
     return root
 
+
+func _classic_title_rule() -> Control:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", 10)
+
+    var left_rule := HSeparator.new()
+    left_rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(left_rule)
+    row.add_child(
+        _label("◆", 11, Color("#9d7e46"), HORIZONTAL_ALIGNMENT_CENTER)
+    )
+
+    var right_rule := HSeparator.new()
+    right_rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(right_rule)
+    return row
+
+
+func _start_menu_button(
+    text: String,
+    action: Callable,
+    primary := false
+) -> Button:
+    var button := Button.new()
+    button.text = text
+    button.custom_minimum_size.y = 54
+    button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    button.add_theme_font_size_override("font_size", 16)
+    button.add_theme_color_override("font_color", Color("#d8cfb7"))
+    button.add_theme_color_override("font_hover_color", Color("#f2dda1"))
+    button.add_theme_color_override("font_pressed_color", Color("#ffe9ae"))
+    button.add_theme_stylebox_override(
+        "normal",
+        _style(
+            "#282318" if primary else "#14191b",
+            "#a1834d" if primary else "#584b36",
+            1,
+            2
+        )
+    )
+    button.add_theme_stylebox_override(
+        "hover",
+        _style("#30291c", "#d0aa60", 2, 2)
+    )
+    button.add_theme_stylebox_override(
+        "pressed",
+        _style("#3b2f1d", "#e0bd70", 2, 2)
+    )
+    button.add_theme_stylebox_override(
+        "focus",
+        _style("#24221b", "#d0aa60", 1, 2)
+    )
+    button.pressed.connect(action)
+    return button
 
 func _build_scenario() -> Control:
     var root := _margin(18)
@@ -1341,7 +1490,7 @@ func _prepare_move(command_type: String = "move") -> void:
         _notify("출발할 자국 Province를 선택하세요.", "warning")
         return
 
-    var available := read_model.available_army(pending_sources)
+    var available: int = read_model.available_army(pending_sources)
     if available <= 0:
         _notify("이동 가능한 병력이 없습니다.", "warning")
         _cancel_mode()
