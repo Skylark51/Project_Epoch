@@ -104,6 +104,69 @@ func _run() -> void:
 		),
 		"지형+특수 자원+시설 합계에 도시·기술 보정을 적용한다."
 	)
+	var farmland_level_two_quote: Dictionary = manager.tile_facility_upgrade_quote(
+		world_map,
+		String(first_city.get("id", "")),
+		first_tile,
+		"farmland"
+	)
+	_expect(
+		bool(farmland_level_two_quote.get("ok", false))
+		and int(farmland_level_two_quote.get("target_level", 0)) == 2,
+		"기존 시설을 같은 타일에서 다음 단계로 업그레이드한다."
+	)
+	var farmland_level_two: Dictionary = manager.complete_tile_facility_upgrade(
+		world_map,
+		String(first_city.get("id", "")),
+		first_tile,
+		"farmland",
+		2
+	)
+	_expect(
+		bool(farmland_level_two.get("ok", false))
+		and int(farmland_level_two.get("level", 0)) == 2,
+		"시설 업그레이드 완료 시 타일 단계가 증가한다."
+	)
+	var market_level_one: Dictionary = manager.complete_tile_facility_upgrade(
+		world_map,
+		String(first_city.get("id", "")),
+		first_tile,
+		"market",
+		1
+	)
+	_expect(
+		bool(market_level_one.get("ok", false)),
+		"같은 타일에 다른 종류의 시설도 중복 설치한다."
+	)
+	var developed_center := manager.tile_state(world_map, first_tile)
+	_expect(
+		int(developed_center.get("facility_levels", {}).get("farmland", 0)) == 2
+		and int(developed_center.get("facility_levels", {}).get("market", 0)) == 1,
+		"타일 시설은 단일 슬롯이 아니라 종류별 업그레이드 단계로 저장한다."
+	)
+	var developed_yield: Dictionary = manager.tile_yield(world_map, first_tile)
+	_expect(
+		is_equal_approx(
+			float(developed_yield.get("facility_yields", {}).get("food", 0.0)),
+			1.5 * (1.0 + ManagerScript.FACILITY_MARGINAL_YIELD_FACTOR)
+		),
+		"같은 시설의 추가 단계 생산량은 점차 체감한다."
+	)
+	var farmland_level_three_quote: Dictionary = manager.tile_facility_upgrade_quote(
+		world_map,
+		String(first_city.get("id", "")),
+		first_tile,
+		"farmland"
+	)
+	_expect(
+		int(
+			farmland_level_three_quote.get("costs", {}).get("construction", 0)
+		)
+		> int(
+			farmland_level_two_quote.get("costs", {}).get("construction", 0)
+		),
+		"시설 단계와 타일 총개발도가 높을수록 다음 비용이 증가한다."
+	)
 	var city_yields: Dictionary = manager.settlement_yields(
 		world_map,
 		String(first_city.get("id", ""))
@@ -112,9 +175,9 @@ func _run() -> void:
 		int(city_yields.get("worked_tile_count", 0)) == 1
 		and is_equal_approx(
 			float(city_yields.get("yields", {}).get("food", 0.0)),
-			expected_food
+			float(developed_yield.get("active_yields", {}).get("food", 0.0))
 		),
-		"작업 중인 중심 타일 생산량을 도시 합계에 반영한다."
+		"업그레이드된 중심 타일 생산량을 도시 합계에 반영한다."
 	)
 	var household_result: Dictionary = manager.add_households(
 		String(first_city.get("id", "")),

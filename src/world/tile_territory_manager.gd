@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 5
+const STATE_VERSION := 6
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -32,6 +32,19 @@ const FACILITY_YIELDS_PER_LEVEL := {
 	"market": {"commerce": 1.5},
 	"fort": {"security": 1.0},
 }
+const FACILITY_BASE_COSTS := {
+	"farmland": {"construction": 20.0, "wood": 5.0, "maintenance": 0.5},
+	"pasture": {"construction": 22.0, "wood": 8.0, "maintenance": 0.5},
+	"fishing": {"construction": 24.0, "wood": 10.0, "maintenance": 0.6},
+	"lumber_camp": {"construction": 26.0, "wood": 8.0, "maintenance": 0.7},
+	"mine": {"construction": 34.0, "wood": 6.0, "stone": 8.0, "maintenance": 1.0},
+	"workshop": {"construction": 32.0, "wood": 10.0, "stone": 5.0, "maintenance": 1.0},
+	"market": {"construction": 30.0, "wood": 12.0, "maintenance": 0.9},
+	"fort": {"construction": 40.0, "wood": 15.0, "stone": 12.0, "maintenance": 1.2},
+}
+const FACILITY_MARGINAL_YIELD_FACTOR := 0.7
+const FACILITY_LEVEL_COST_GROWTH := 1.75
+const TILE_DENSITY_COST_RATE := 0.2
 
 var _state: Dictionary = {}
 
@@ -496,6 +509,117 @@ func configure_tile_yield_sources(
 	}
 
 
+func tile_facility_upgrade_quote(
+	world_map,
+	settlement_id: String,
+	tile: Vector2i,
+	facility_id: String
+) -> Dictionary:
+	var tile_check := _validate_managed_tile(
+		world_map,
+		settlement_id,
+		tile
+	)
+	if not bool(tile_check.get("ok", false)):
+		return tile_check
+	if not FACILITY_YIELDS_PER_LEVEL.has(facility_id):
+		return {
+			"ok": false,
+			"reason_code": "facility_unknown",
+			"reason": "등록되지 않은 타일 시설입니다: %s" % facility_id,
+		}
+	var tile_record: Dictionary = tile_check.get("tile_record", {})
+	var facility_levels: Dictionary = tile_record.get("facility_levels", {})
+	var current_level := maxi(0, int(facility_levels.get(facility_id, 0)))
+	var total_levels := 0
+	for level_value in facility_levels.values():
+		total_levels += maxi(0, int(level_value))
+	var level_multiplier := pow(FACILITY_LEVEL_COST_GROWTH, current_level)
+	var density_multiplier := 1.0 + float(total_levels) * TILE_DENSITY_COST_RATE
+	var cost_multiplier := level_multiplier * density_multiplier
+	var base_cost: Dictionary = FACILITY_BASE_COSTS.get(facility_id, {})
+	var costs := {
+		"construction": ceili(
+			float(base_cost.get("construction", 0.0)) * cost_multiplier
+		),
+		"wood": ceili(float(base_cost.get("wood", 0.0)) * cost_multiplier),
+		"stone": ceili(float(base_cost.get("stone", 0.0)) * cost_multiplier),
+		"iron": ceili(float(base_cost.get("iron", 0.0)) * cost_multiplier),
+	}
+	var marginal_multiplier := pow(FACILITY_MARGINAL_YIELD_FACTOR, current_level)
+	var marginal_yields := _zero_yields()
+	var base_yields := _normalized_yields(
+		FACILITY_YIELDS_PER_LEVEL.get(facility_id, {})
+	)
+	for yield_key in YIELD_KEYS:
+		marginal_yields[yield_key] = (
+			float(base_yields[yield_key]) * marginal_multiplier
+		)
+	var maintenance := (
+		float(base_cost.get("maintenance", 0.0))
+		* pow(1.35, current_level)
+		* (1.0 + float(total_levels) * 0.1)
+	)
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"tile": tile,
+		"tile_key": String(tile_check.get("tile_key", "")),
+		"facility_id": facility_id,
+		"current_level": current_level,
+		"target_level": current_level + 1,
+		"total_tile_development_levels": total_levels,
+		"cost_multiplier": cost_multiplier,
+		"costs": costs,
+		"maintenance": maintenance,
+		"marginal_yields": marginal_yields,
+	}
+
+
+func complete_tile_facility_upgrade(
+	world_map,
+	settlement_id: String,
+	tile: Vector2i,
+	facility_id: String,
+	expected_target_level: int = -1
+) -> Dictionary:
+	var quote := tile_facility_upgrade_quote(
+		world_map,
+		settlement_id,
+		tile,
+		facility_id
+	)
+	if not bool(quote.get("ok", false)):
+		return quote
+	var target_level := int(quote.get("target_level", 1))
+	if expected_target_level > 0 and expected_target_level != target_level:
+		return {
+			"ok": false,
+			"reason_code": "stale_upgrade_quote",
+			"reason": "시설 단계가 바뀌어 비용을 다시 계산해야 합니다.",
+			"current_level": int(quote.get("current_level", 0)),
+			"target_level": target_level,
+		}
+	var key := String(quote.get("tile_key", ""))
+	var tile_record: Dictionary = _state.tiles[key]
+	var facility_levels: Dictionary = tile_record.get("facility_levels", {})
+	facility_levels[facility_id] = target_level
+	tile_record["facility_levels"] = facility_levels
+	_state.tiles[key] = tile_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"tile_key": key,
+		"facility_id": facility_id,
+		"level": target_level,
+		"costs": quote.get("costs", {}).duplicate(true),
+		"maintenance": float(quote.get("maintenance", 0.0)),
+		"marginal_yields": quote.get("marginal_yields", {}).duplicate(true),
+	}
+
+
 func set_yield_modifiers(
 	settlement_id: String,
 	city_modifiers: Dictionary,
@@ -548,14 +672,10 @@ func tile_yield(world_map, tile: Vector2i) -> Dictionary:
 	for facility_id_value in tile_record.get("facility_levels", {}).keys():
 		var facility_id := String(facility_id_value)
 		var level := int(tile_record.facility_levels[facility_id_value])
-		var per_level := _normalized_yields(
-			FACILITY_YIELDS_PER_LEVEL.get(facility_id, {})
+		_add_yields(
+			facility_yields,
+			_effective_facility_yields(facility_id, level)
 		)
-		for yield_key in YIELD_KEYS:
-			facility_yields[yield_key] = (
-				float(facility_yields[yield_key])
-				+ float(per_level[yield_key]) * level
-			)
 	var city_modifiers := _normalized_modifiers(
 		settlement_record.get("city_yield_modifiers", {})
 	)
@@ -1196,6 +1316,57 @@ func _make_tile_record(
 		"special_resources": [],
 		"facility_levels": {},
 	}
+
+
+func _validate_managed_tile(
+	world_map,
+	settlement_id: String,
+	tile: Vector2i
+) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {
+			"ok": false,
+			"reason_code": "tile_out_of_bounds",
+			"reason": "타일이 지도 안에 없습니다.",
+		}
+	var key := _tile_key(world_map, tile)
+	var tile_record: Dictionary = _state.get("tiles", {}).get(key, {})
+	if tile_record.is_empty():
+		return {
+			"ok": false,
+			"reason_code": "tile_unclaimed",
+			"reason": "도시 영향권 밖의 타일입니다.",
+		}
+	if String(tile_record.get("managing_settlement_id", "")) != settlement_id:
+		return {
+			"ok": false,
+			"reason_code": "tile_managed_by_other_city",
+			"reason": "다른 도시가 관리하는 타일입니다.",
+		}
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"tile_key": key,
+		"tile_record": tile_record,
+	}
+
+
+func _effective_facility_yields(facility_id: String, level: int) -> Dictionary:
+	var result := _zero_yields()
+	var base_yields := _normalized_yields(
+		FACILITY_YIELDS_PER_LEVEL.get(facility_id, {})
+	)
+	for level_index in range(maxi(0, level)):
+		var marginal_multiplier := pow(
+			FACILITY_MARGINAL_YIELD_FACTOR,
+			level_index
+		)
+		for yield_key in YIELD_KEYS:
+			result[yield_key] = (
+				float(result[yield_key])
+				+ float(base_yields[yield_key]) * marginal_multiplier
+			)
+	return result
 
 
 func _zero_yields() -> Dictionary:
