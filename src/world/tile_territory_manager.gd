@@ -1,12 +1,37 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 4
+const STATE_VERSION := 5
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
 const MIN_CITY_CENTER_DISTANCE := CITY_EXCLUSION_RADIUS + 1
 const CITY_MAX_INFLUENCE_RADIUS := 2
+const YIELD_KEYS := ["food", "production", "commerce", "security"]
+const TERRAIN_BASE_YIELDS := {
+	2: {"food": 1.0, "commerce": 1.0},
+	3: {"food": 1.0, "commerce": 1.0},
+	4: {"food": 2.0, "production": 1.0},
+	5: {"food": 3.0},
+	6: {"food": 1.0, "production": 2.0},
+	7: {"food": 1.0, "production": 2.0},
+	8: {"production": 2.0},
+	9: {"production": 1.0, "commerce": 1.0},
+	10: {"food": 2.0, "production": 1.0},
+	11: {"food": 2.0, "commerce": 1.0},
+	12: {"food": 2.0, "commerce": 2.0},
+	13: {"food": 2.0, "commerce": 1.0},
+}
+const FACILITY_YIELDS_PER_LEVEL := {
+	"farmland": {"food": 1.5},
+	"pasture": {"food": 1.0, "production": 0.5},
+	"fishing": {"food": 1.5, "commerce": 0.5},
+	"lumber_camp": {"production": 1.5},
+	"mine": {"production": 2.0},
+	"workshop": {"production": 1.5},
+	"market": {"commerce": 1.5},
+	"fort": {"security": 1.0},
+}
 
 var _state: Dictionary = {}
 
@@ -392,6 +417,205 @@ func border_edges(
 	return result
 
 
+func configure_tile_yield_sources(
+	world_map,
+	settlement_id: String,
+	tile: Vector2i,
+	special_resources: Array,
+	facility_levels: Dictionary
+) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {
+			"ok": false,
+			"reason_code": "tile_out_of_bounds",
+			"reason": "생산 정보를 설정할 타일이 지도 안에 없습니다.",
+		}
+	var key := _tile_key(world_map, tile)
+	var tile_record: Dictionary = _state.get("tiles", {}).get(key, {})
+	if tile_record.is_empty():
+		return {
+			"ok": false,
+			"reason_code": "tile_unclaimed",
+			"reason": "도시 영향권 밖 타일에는 생산 정보를 설정할 수 없습니다.",
+		}
+	if String(tile_record.get("managing_settlement_id", "")) != settlement_id:
+		return {
+			"ok": false,
+			"reason_code": "tile_managed_by_other_city",
+			"reason": "다른 도시의 관리 타일입니다.",
+		}
+	var normalized_resources: Array[Dictionary] = []
+	for resource_value in special_resources:
+		if resource_value is not Dictionary:
+			return {
+				"ok": false,
+				"reason_code": "special_resource_invalid",
+				"reason": "특수 자원 정보는 사전 형식이어야 합니다.",
+			}
+		var resource: Dictionary = resource_value
+		var resource_id := String(resource.get("id", ""))
+		if resource_id.is_empty() or resource.get("yields", {}) is not Dictionary:
+			return {
+				"ok": false,
+				"reason_code": "special_resource_invalid",
+				"reason": "특수 자원에는 id와 생산량이 필요합니다.",
+			}
+		normalized_resources.append(
+			{
+				"id": resource_id,
+				"yields": _normalized_yields(resource.get("yields", {})),
+			}
+		)
+	var normalized_facilities: Dictionary = {}
+	for facility_id_value in facility_levels.keys():
+		var facility_id := String(facility_id_value)
+		if not FACILITY_YIELDS_PER_LEVEL.has(facility_id):
+			return {
+				"ok": false,
+				"reason_code": "facility_unknown",
+				"reason": "등록되지 않은 타일 시설입니다: %s" % facility_id,
+			}
+		var level := int(facility_levels[facility_id_value])
+		if level < 0:
+			return {
+				"ok": false,
+				"reason_code": "facility_level_invalid",
+				"reason": "시설 단계는 음수가 될 수 없습니다.",
+			}
+		if level > 0:
+			normalized_facilities[facility_id] = level
+	tile_record["special_resources"] = normalized_resources
+	tile_record["facility_levels"] = normalized_facilities
+	_state.tiles[key] = tile_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"tile_key": key,
+		"special_resources": normalized_resources.duplicate(true),
+		"facility_levels": normalized_facilities.duplicate(true),
+	}
+
+
+func set_yield_modifiers(
+	settlement_id: String,
+	city_modifiers: Dictionary,
+	technology_modifiers: Dictionary
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "생산 보정을 설정할 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	settlement_record["city_yield_modifiers"] = _normalized_modifiers(city_modifiers)
+	settlement_record["technology_yield_modifiers"] = _normalized_modifiers(
+		technology_modifiers
+	)
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"city_yield_modifiers": settlement_record.city_yield_modifiers.duplicate(true),
+		"technology_yield_modifiers":
+			settlement_record.technology_yield_modifiers.duplicate(true),
+	}
+
+
+func tile_yield(world_map, tile: Vector2i) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {}
+	var tile_record := tile_state(world_map, tile)
+	if tile_record.is_empty():
+		return {}
+	var settlement_id := String(tile_record.get("managing_settlement_id", ""))
+	var settlement_record: Dictionary = _state.get("settlements", {}).get(
+		settlement_id,
+		{}
+	)
+	var terrain_yields := _normalized_yields(
+		TERRAIN_BASE_YIELDS.get(int(tile_record.get("terrain_id", 0)), {})
+	)
+	var special_resource_yields := _zero_yields()
+	for resource_value in tile_record.get("special_resources", []):
+		if resource_value is Dictionary:
+			_add_yields(
+				special_resource_yields,
+				_normalized_yields(resource_value.get("yields", {}))
+			)
+	var facility_yields := _zero_yields()
+	for facility_id_value in tile_record.get("facility_levels", {}).keys():
+		var facility_id := String(facility_id_value)
+		var level := int(tile_record.facility_levels[facility_id_value])
+		var per_level := _normalized_yields(
+			FACILITY_YIELDS_PER_LEVEL.get(facility_id, {})
+		)
+		for yield_key in YIELD_KEYS:
+			facility_yields[yield_key] = (
+				float(facility_yields[yield_key])
+				+ float(per_level[yield_key]) * level
+			)
+	var city_modifiers := _normalized_modifiers(
+		settlement_record.get("city_yield_modifiers", {})
+	)
+	var technology_modifiers := _normalized_modifiers(
+		settlement_record.get("technology_yield_modifiers", {})
+	)
+	var potential_yields := _zero_yields()
+	for yield_key in YIELD_KEYS:
+		var subtotal := (
+			float(terrain_yields[yield_key])
+			+ float(special_resource_yields[yield_key])
+			+ float(facility_yields[yield_key])
+		)
+		var multiplier := (
+			1.0
+			+ float(city_modifiers[yield_key])
+			+ float(technology_modifiers[yield_key])
+		)
+		potential_yields[yield_key] = maxf(0.0, subtotal * multiplier)
+	var active_yields := (
+		potential_yields.duplicate(true)
+		if bool(tile_record.get("worked", false))
+		else _zero_yields()
+	)
+	return {
+		"tile": tile,
+		"tile_key": _tile_key(world_map, tile),
+		"settlement_id": settlement_id,
+		"worked": bool(tile_record.get("worked", false)),
+		"work_mode": String(tile_record.get("work_mode", "unworked")),
+		"terrain_yields": terrain_yields,
+		"special_resource_yields": special_resource_yields,
+		"facility_yields": facility_yields,
+		"city_modifiers": city_modifiers,
+		"technology_modifiers": technology_modifiers,
+		"potential_yields": potential_yields,
+		"active_yields": active_yields,
+	}
+
+
+func settlement_yields(world_map, settlement_id: String) -> Dictionary:
+	var totals := _zero_yields()
+	var worked_tile_count := 0
+	for tile_record in managed_tiles(settlement_id):
+		if not bool(tile_record.get("worked", false)):
+			continue
+		var tile := Vector2i(
+			int(tile_record.get("column", -1)),
+			int(tile_record.get("row", -1))
+		)
+		var detail := tile_yield(world_map, tile)
+		_add_yields(totals, detail.get("active_yields", {}))
+		worked_tile_count += 1
+	return {
+		"settlement_id": settlement_id,
+		"worked_tile_count": worked_tile_count,
+		"yields": totals,
+	}
+
+
 func households(settlement_id: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var settlement_record: Dictionary = _state.get("settlements", {}).get(
@@ -633,6 +857,27 @@ func validate_state(world_map) -> Dictionary:
 				errors.append("unassigned_tile_marked_worked:%s" % tile_key)
 		elif not bool(tile_record.get("worked", false)) or work_mode != "household":
 			errors.append("household_tile_not_worked:%s" % tile_key)
+		var special_resources_value = tile_record.get("special_resources", [])
+		if special_resources_value is not Array:
+			errors.append("tile_special_resources_not_array:%s" % tile_key)
+		else:
+			for resource_value in special_resources_value:
+				if (
+					resource_value is not Dictionary
+					or String(resource_value.get("id", "")).is_empty()
+					or resource_value.get("yields", {}) is not Dictionary
+				):
+					errors.append("tile_special_resource_invalid:%s" % tile_key)
+		var facilities_value = tile_record.get("facility_levels", {})
+		if facilities_value is not Dictionary:
+			errors.append("tile_facilities_not_dictionary:%s" % tile_key)
+		else:
+			for facility_id_value in facilities_value.keys():
+				if (
+					not FACILITY_YIELDS_PER_LEVEL.has(String(facility_id_value))
+					or int(facilities_value[facility_id_value]) < 0
+				):
+					errors.append("tile_facility_invalid:%s" % tile_key)
 		if not linked_settlement_id.is_empty():
 			if not settlements.has(linked_settlement_id):
 				errors.append("tile_settlement_missing:%s" % tile_key)
@@ -689,6 +934,15 @@ func validate_state(world_map) -> Dictionary:
 			errors.append("settlement_center_work_mode_invalid:%s" % settlement_key)
 		if String(settlement_record.get("region_id", "")) != _region_id(world_map, center):
 			errors.append("settlement_region_mismatch:%s" % settlement_key)
+		for modifier_field in [
+			"city_yield_modifiers",
+			"technology_yield_modifiers",
+		]:
+			if settlement_record.get(modifier_field, {}) is not Dictionary:
+				errors.append(
+					"settlement_yield_modifiers_invalid:%s:%s"
+					% [settlement_key, modifier_field]
+				)
 		var household_records_value = settlement_record.get("households", {})
 		if household_records_value is not Dictionary:
 			errors.append("settlement_households_not_dictionary:%s" % settlement_key)
@@ -873,6 +1127,8 @@ func _found_validated_city(
 		"influence_radius": INITIAL_CLAIM_RADIUS,
 		"households": {},
 		"next_household_id": 1,
+		"city_yield_modifiers": {},
+		"technology_yield_modifiers": {},
 	}
 	_state.settlements[settlement_id] = settlement_record
 	_rebuild_regions()
@@ -937,7 +1193,40 @@ func _make_tile_record(
 		"worked": not settlement_id.is_empty(),
 		"work_mode": "city_center" if not settlement_id.is_empty() else "unworked",
 		"assigned_household_id": "",
+		"special_resources": [],
+		"facility_levels": {},
 	}
+
+
+func _zero_yields() -> Dictionary:
+	return {
+		"food": 0.0,
+		"production": 0.0,
+		"commerce": 0.0,
+		"security": 0.0,
+	}
+
+
+func _normalized_yields(source: Dictionary) -> Dictionary:
+	var result := _zero_yields()
+	for yield_key in YIELD_KEYS:
+		result[yield_key] = maxf(0.0, float(source.get(yield_key, 0.0)))
+	return result
+
+
+func _normalized_modifiers(source: Dictionary) -> Dictionary:
+	var result := _zero_yields()
+	for yield_key in YIELD_KEYS:
+		result[yield_key] = maxf(-0.95, float(source.get(yield_key, 0.0)))
+	return result
+
+
+func _add_yields(target: Dictionary, addition: Dictionary) -> void:
+	for yield_key in YIELD_KEYS:
+		target[yield_key] = (
+			float(target.get(yield_key, 0.0))
+			+ float(addition.get(yield_key, 0.0))
+		)
 
 
 func _clear_household_from_tile(tile_key: String, household_id: String) -> void:
@@ -1039,6 +1328,13 @@ func _migrate_legacy_management_links() -> void:
 		var settlement_record: Dictionary = settlement_value
 		if settlement_record.get("households", {}) is not Dictionary:
 			settlement_record["households"] = {}
+		if settlement_record.get("city_yield_modifiers", {}) is not Dictionary:
+			settlement_record["city_yield_modifiers"] = {}
+		if (
+			settlement_record.get("technology_yield_modifiers", {})
+			is not Dictionary
+		):
+			settlement_record["technology_yield_modifiers"] = {}
 		settlement_record["next_household_id"] = maxi(
 			1,
 			int(settlement_record.get("next_household_id", 1))
@@ -1058,6 +1354,10 @@ func _migrate_legacy_management_links() -> void:
 			if not tiles.has(claimed_key):
 				continue
 			var tile_record: Dictionary = tiles[claimed_key]
+			if tile_record.get("special_resources", []) is not Array:
+				tile_record["special_resources"] = []
+			if tile_record.get("facility_levels", {}) is not Dictionary:
+				tile_record["facility_levels"] = {}
 			if String(tile_record.get("managing_settlement_id", "")).is_empty():
 				tile_record["managing_settlement_id"] = settlement_id
 			if String(tile_record.get("settlement_id", "")) == settlement_id:

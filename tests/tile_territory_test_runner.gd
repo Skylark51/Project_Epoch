@@ -65,6 +65,57 @@ func _run() -> void:
 			== String(first_city.get("id", "")),
 			"초기 영향권의 모든 타일은 한 도시에만 귀속된다."
 		)
+	var base_yield: Dictionary = manager.tile_yield(world_map, first_tile)
+	_expect(
+		bool(base_yield.get("worked", false))
+		and float(base_yield.get("active_yields", {}).get("food", 0.0)) > 0.0,
+		"중심 타일의 지형 기본 생산량을 자동 산출한다."
+	)
+	var configured_yield: Dictionary = manager.configure_tile_yield_sources(
+		world_map,
+		String(first_city.get("id", "")),
+		first_tile,
+		[{"id": "grain", "yields": {"food": 2.0}}],
+		{"farmland": 1}
+	)
+	_expect(
+		bool(configured_yield.get("ok", false)),
+		"타일에 특수 자원과 시설 생산원을 함께 설정한다."
+	)
+	_expect(
+		bool(
+			manager.set_yield_modifiers(
+				String(first_city.get("id", "")),
+				{"food": 0.1},
+				{"food": 0.2}
+			).get("ok", false)
+		),
+		"도시 보정과 기술 보정을 각각 설정한다."
+	)
+	var calculated_yield: Dictionary = manager.tile_yield(world_map, first_tile)
+	var terrain_food := float(
+		calculated_yield.get("terrain_yields", {}).get("food", 0.0)
+	)
+	var expected_food := (terrain_food + 2.0 + 1.5) * 1.3
+	_expect(
+		is_equal_approx(
+			float(calculated_yield.get("potential_yields", {}).get("food", 0.0)),
+			expected_food
+		),
+		"지형+특수 자원+시설 합계에 도시·기술 보정을 적용한다."
+	)
+	var city_yields: Dictionary = manager.settlement_yields(
+		world_map,
+		String(first_city.get("id", ""))
+	)
+	_expect(
+		int(city_yields.get("worked_tile_count", 0)) == 1
+		and is_equal_approx(
+			float(city_yields.get("yields", {}).get("food", 0.0)),
+			expected_food
+		),
+		"작업 중인 중심 타일 생산량을 도시 합계에 반영한다."
+	)
 	var household_result: Dictionary = manager.add_households(
 		String(first_city.get("id", "")),
 		2,
