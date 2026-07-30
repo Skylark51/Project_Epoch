@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 3
+const STATE_VERSION := 4
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -392,6 +392,190 @@ func border_edges(
 	return result
 
 
+func households(settlement_id: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var settlement_record: Dictionary = _state.get("settlements", {}).get(
+		settlement_id,
+		{}
+	)
+	for household_value in settlement_record.get("households", {}).values():
+		if household_value is Dictionary:
+			result.append(household_value.duplicate(true))
+	result.sort_custom(
+		func(first: Dictionary, second: Dictionary) -> bool:
+			return String(first.get("id", "")) < String(second.get("id", ""))
+	)
+	return result
+
+
+func add_households(
+	settlement_id: String,
+	count: int,
+	members_per_household: int = 4,
+	occupation: String = "unassigned"
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "가구를 등록할 도시가 없습니다.",
+		}
+	if count <= 0:
+		return {
+			"ok": false,
+			"reason_code": "household_count_invalid",
+			"reason": "추가할 가구 수는 1 이상이어야 합니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var household_records: Dictionary = settlement_record.get("households", {})
+	var next_serial := maxi(1, int(settlement_record.get("next_household_id", 1)))
+	var added_ids: Array[String] = []
+	for unused_index in range(count):
+		var household_id := "%s_household_%d" % [settlement_id, next_serial]
+		while household_records.has(household_id):
+			next_serial += 1
+			household_id = "%s_household_%d" % [settlement_id, next_serial]
+		household_records[household_id] = {
+			"id": household_id,
+			"settlement_id": settlement_id,
+			"members": maxi(1, members_per_household),
+			"occupation": occupation,
+			"assigned_tile_key": "",
+		}
+		added_ids.append(household_id)
+		next_serial += 1
+	settlement_record["households"] = household_records
+	settlement_record["next_household_id"] = next_serial
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"added_household_ids": added_ids,
+		"household_count": household_records.size(),
+	}
+
+
+func assign_household_to_tile(
+	world_map,
+	settlement_id: String,
+	household_id: String,
+	tile: Vector2i
+) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {
+			"ok": false,
+			"reason_code": "tile_out_of_bounds",
+			"reason": "가구를 배치할 타일이 지도 안에 없습니다.",
+		}
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "가구를 배치할 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var household_records: Dictionary = settlement_record.get("households", {})
+	if not household_records.has(household_id):
+		return {
+			"ok": false,
+			"reason_code": "household_missing",
+			"reason": "해당 도시에 등록된 가구가 아닙니다.",
+		}
+	var key := _tile_key(world_map, tile)
+	var tile_record: Dictionary = _state.get("tiles", {}).get(key, {})
+	if tile_record.is_empty():
+		return {
+			"ok": false,
+			"reason_code": "tile_unclaimed",
+			"reason": "도시 영향권 밖의 타일에는 가구를 배치할 수 없습니다.",
+		}
+	if String(tile_record.get("managing_settlement_id", "")) != settlement_id:
+		return {
+			"ok": false,
+			"reason_code": "tile_managed_by_other_city",
+			"reason": "다른 도시가 관리하는 타일에는 가구를 배치할 수 없습니다.",
+		}
+	if String(tile_record.get("settlement_id", "")) == settlement_id:
+		return {
+			"ok": false,
+			"reason_code": "city_center_auto_worked",
+			"reason": "도시 중심 타일은 가구를 배치하지 않아도 자동 작업됩니다.",
+		}
+	var occupying_household_id := String(
+		tile_record.get("assigned_household_id", "")
+	)
+	if (
+		not occupying_household_id.is_empty()
+		and occupying_household_id != household_id
+	):
+		return {
+			"ok": false,
+			"reason_code": "tile_household_capacity",
+			"reason": "한 타일에는 한 가구만 배치할 수 있습니다.",
+			"assigned_household_id": occupying_household_id,
+		}
+	var household_record: Dictionary = household_records[household_id]
+	var previous_key := String(household_record.get("assigned_tile_key", ""))
+	if not previous_key.is_empty() and previous_key != key:
+		_clear_household_from_tile(previous_key, household_id)
+	tile_record["worked"] = true
+	tile_record["work_mode"] = "household"
+	tile_record["assigned_household_id"] = household_id
+	_state.tiles[key] = tile_record
+	household_record["assigned_tile_key"] = key
+	household_records[household_id] = household_record
+	settlement_record["households"] = household_records
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"household_id": household_id,
+		"tile_key": key,
+		"previous_tile_key": previous_key,
+	}
+
+
+func unassign_household(settlement_id: String, household_id: String) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "가구가 속한 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var household_records: Dictionary = settlement_record.get("households", {})
+	if not household_records.has(household_id):
+		return {
+			"ok": false,
+			"reason_code": "household_missing",
+			"reason": "해당 도시에 등록된 가구가 아닙니다.",
+		}
+	var household_record: Dictionary = household_records[household_id]
+	var previous_key := String(household_record.get("assigned_tile_key", ""))
+	if not previous_key.is_empty():
+		_clear_household_from_tile(previous_key, household_id)
+	household_record["assigned_tile_key"] = ""
+	household_records[household_id] = household_record
+	settlement_record["households"] = household_records
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"household_id": household_id,
+		"previous_tile_key": previous_key,
+	}
+
+
+func worked_tiles(settlement_id: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for tile_record in managed_tiles(settlement_id):
+		if bool(tile_record.get("worked", false)):
+			result.append(tile_record)
+	return result
+
+
 func validate_state(world_map) -> Dictionary:
 	var errors: Array[String] = []
 	var warnings: Array[String] = []
@@ -435,6 +619,20 @@ func validate_state(world_map) -> Dictionary:
 			tile_record.get("owner_id", "")
 		):
 			errors.append("tile_manager_owner_mismatch:%s" % tile_key)
+		var assigned_household_id := String(
+			tile_record.get("assigned_household_id", "")
+		)
+		var work_mode := String(tile_record.get("work_mode", "unworked"))
+		if not linked_settlement_id.is_empty():
+			if not bool(tile_record.get("worked", false)) or work_mode != "city_center":
+				errors.append("city_center_not_auto_worked:%s" % tile_key)
+			if not assigned_household_id.is_empty():
+				errors.append("city_center_household_assigned:%s" % tile_key)
+		elif assigned_household_id.is_empty():
+			if bool(tile_record.get("worked", false)) or work_mode != "unworked":
+				errors.append("unassigned_tile_marked_worked:%s" % tile_key)
+		elif not bool(tile_record.get("worked", false)) or work_mode != "household":
+			errors.append("household_tile_not_worked:%s" % tile_key)
 		if not linked_settlement_id.is_empty():
 			if not settlements.has(linked_settlement_id):
 				errors.append("tile_settlement_missing:%s" % tile_key)
@@ -481,8 +679,77 @@ func validate_state(world_map) -> Dictionary:
 			and String(center_record.get("managing_settlement_id", "")) != settlement_key
 		):
 			errors.append("settlement_center_manager_mismatch:%s" % settlement_key)
+		if (
+			not center_record.is_empty()
+			and (
+				not bool(center_record.get("worked", false))
+				or String(center_record.get("work_mode", "")) != "city_center"
+			)
+		):
+			errors.append("settlement_center_work_mode_invalid:%s" % settlement_key)
 		if String(settlement_record.get("region_id", "")) != _region_id(world_map, center):
 			errors.append("settlement_region_mismatch:%s" % settlement_key)
+		var household_records_value = settlement_record.get("households", {})
+		if household_records_value is not Dictionary:
+			errors.append("settlement_households_not_dictionary:%s" % settlement_key)
+		else:
+			var household_records: Dictionary = household_records_value
+			var assigned_household_tiles: Dictionary = {}
+			for household_key_value in household_records.keys():
+				var household_key := String(household_key_value)
+				var household_value = household_records[household_key_value]
+				if household_value is not Dictionary:
+					errors.append(
+						"household_record_not_dictionary:%s:%s"
+						% [settlement_key, household_key]
+					)
+					continue
+				var household_record: Dictionary = household_value
+				if String(household_record.get("id", "")) != household_key:
+					errors.append(
+						"household_id_mismatch:%s:%s"
+						% [settlement_key, household_key]
+					)
+				if String(household_record.get("settlement_id", "")) != settlement_key:
+					errors.append(
+						"household_settlement_mismatch:%s:%s"
+						% [settlement_key, household_key]
+					)
+				var assigned_key := String(
+					household_record.get("assigned_tile_key", "")
+				)
+				if assigned_key.is_empty():
+					continue
+				if assigned_household_tiles.has(assigned_key):
+					errors.append(
+						"household_tile_duplicate:%s:%s"
+						% [settlement_key, assigned_key]
+					)
+				else:
+					assigned_household_tiles[assigned_key] = household_key
+				if not tiles.has(assigned_key):
+					errors.append(
+						"household_tile_missing:%s:%s"
+						% [settlement_key, household_key]
+					)
+					continue
+				var assigned_tile: Dictionary = tiles[assigned_key]
+				if (
+					String(assigned_tile.get("managing_settlement_id", ""))
+					!= settlement_key
+				):
+					errors.append(
+						"household_tile_manager_mismatch:%s:%s"
+						% [settlement_key, household_key]
+					)
+				if (
+					String(assigned_tile.get("assigned_household_id", ""))
+					!= household_key
+				):
+					errors.append(
+						"household_tile_link_mismatch:%s:%s"
+						% [settlement_key, household_key]
+					)
 		for claimed_key_value in settlement_record.get("claimed_tile_keys", []):
 			var claimed_key := String(claimed_key_value)
 			if not tiles.has(claimed_key):
@@ -604,6 +871,8 @@ func _found_validated_city(
 		"founded_turn": maxi(1, int(options.get("founded_turn", 1))),
 		"claimed_tile_keys": claimed_keys,
 		"influence_radius": INITIAL_CLAIM_RADIUS,
+		"households": {},
+		"next_household_id": 1,
 	}
 	_state.settlements[settlement_id] = settlement_record
 	_rebuild_regions()
@@ -665,8 +934,22 @@ func _make_tile_record(
 		"terrain_id": int(world_map.terrain_id(tile.x, tile.y)),
 		"settlement_id": settlement_id,
 		"managing_settlement_id": managing_settlement_id,
-		"worked": bool(tile_state(world_map, tile).get("worked", false)),
+		"worked": not settlement_id.is_empty(),
+		"work_mode": "city_center" if not settlement_id.is_empty() else "unworked",
+		"assigned_household_id": "",
 	}
+
+
+func _clear_household_from_tile(tile_key: String, household_id: String) -> void:
+	if not _state.get("tiles", {}).has(tile_key):
+		return
+	var tile_record: Dictionary = _state.tiles[tile_key]
+	if String(tile_record.get("assigned_household_id", "")) != household_id:
+		return
+	tile_record["assigned_household_id"] = ""
+	tile_record["worked"] = false
+	tile_record["work_mode"] = "unworked"
+	_state.tiles[tile_key] = tile_record
 
 
 func _make_border_edge(
@@ -754,6 +1037,12 @@ func _migrate_legacy_management_links() -> void:
 		if settlement_value is not Dictionary:
 			continue
 		var settlement_record: Dictionary = settlement_value
+		if settlement_record.get("households", {}) is not Dictionary:
+			settlement_record["households"] = {}
+		settlement_record["next_household_id"] = maxi(
+			1,
+			int(settlement_record.get("next_household_id", 1))
+		)
 		settlement_record["influence_radius"] = clampi(
 			int(
 				settlement_record.get(
@@ -771,6 +1060,19 @@ func _migrate_legacy_management_links() -> void:
 			var tile_record: Dictionary = tiles[claimed_key]
 			if String(tile_record.get("managing_settlement_id", "")).is_empty():
 				tile_record["managing_settlement_id"] = settlement_id
+			if String(tile_record.get("settlement_id", "")) == settlement_id:
+				tile_record["worked"] = true
+				tile_record["work_mode"] = "city_center"
+				tile_record["assigned_household_id"] = ""
+			else:
+				var assigned_id := String(
+					tile_record.get("assigned_household_id", "")
+				)
+				tile_record["assigned_household_id"] = assigned_id
+				tile_record["worked"] = not assigned_id.is_empty()
+				tile_record["work_mode"] = (
+					"household" if not assigned_id.is_empty() else "unworked"
+				)
 			tiles[claimed_key] = tile_record
 		settlements[settlement_key_value] = settlement_record
 	_state["tiles"] = tiles

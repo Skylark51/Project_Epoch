@@ -53,11 +53,99 @@ func _run() -> void:
 		== String(first_city.get("id", "")),
 		"도시 중심 타일의 관리 도시를 기록한다."
 	)
+	_expect(
+		bool(center_state.get("worked", false))
+		and String(center_state.get("work_mode", "")) == "city_center"
+		and String(center_state.get("assigned_household_id", "")).is_empty(),
+		"도시 중심 타일은 가구를 소모하지 않고 자동 작업한다."
+	)
 	for tile_record in manager.managed_tiles(String(first_city.get("id", ""))):
 		_expect(
 			String(tile_record.get("managing_settlement_id", ""))
 			== String(first_city.get("id", "")),
 			"초기 영향권의 모든 타일은 한 도시에만 귀속된다."
+		)
+	var household_result: Dictionary = manager.add_households(
+		String(first_city.get("id", "")),
+		2,
+		4,
+		"farmers"
+	)
+	_expect(
+		bool(household_result.get("ok", false))
+		and int(household_result.get("household_count", 0)) == 2,
+		"도시에 작업 단위인 가구를 등록한다."
+	)
+	var household_ids: Array = household_result.get("added_household_ids", [])
+	var work_tiles := _non_center_managed_tiles(
+		manager,
+		String(first_city.get("id", ""))
+	)
+	_expect(work_tiles.size() >= 2, "가구를 배치할 비중심 타일을 찾는다.")
+	if household_ids.size() >= 2 and work_tiles.size() >= 2:
+		var first_household := String(household_ids[0])
+		var second_household := String(household_ids[1])
+		var first_work_tile := Vector2i(
+			int(work_tiles[0].get("column", -1)),
+			int(work_tiles[0].get("row", -1))
+		)
+		var second_work_tile := Vector2i(
+			int(work_tiles[1].get("column", -1)),
+			int(work_tiles[1].get("row", -1))
+		)
+		_expect(
+			bool(
+				manager.assign_household_to_tile(
+					world_map,
+					String(first_city.get("id", "")),
+					first_household,
+					first_work_tile
+				).get("ok", false)
+			),
+			"비중심 타일에 한 가구를 배치한다."
+		)
+		var capacity_block: Dictionary = manager.assign_household_to_tile(
+			world_map,
+			String(first_city.get("id", "")),
+			second_household,
+			first_work_tile
+		)
+		_expect(
+			not bool(capacity_block.get("ok", true))
+			and String(capacity_block.get("reason_code", ""))
+			== "tile_household_capacity",
+			"한 타일에 두 가구를 중복 배치할 수 없다."
+		)
+		var moved: Dictionary = manager.assign_household_to_tile(
+			world_map,
+			String(first_city.get("id", "")),
+			first_household,
+			second_work_tile
+		)
+		_expect(bool(moved.get("ok", false)), "가구를 다른 관리 타일로 이동한다.")
+		_expect(
+			not bool(manager.tile_state(world_map, first_work_tile).get("worked", true))
+			and String(
+				manager.tile_state(world_map, second_work_tile).get(
+					"assigned_household_id",
+					""
+				)
+			)
+			== first_household,
+			"가구 이동 시 이전 타일은 자동 해제된다."
+		)
+		_expect(
+			bool(
+				manager.unassign_household(
+					String(first_city.get("id", "")),
+					first_household
+				).get("ok", false)
+			),
+			"가구의 타일 작업을 해제한다."
+		)
+		_expect(
+			not bool(manager.tile_state(world_map, second_work_tile).get("worked", true)),
+			"가구가 빠진 일반 타일은 작업 중이 아니게 된다."
 		)
 	var nearby_tile := _find_settleable_in_distance(
 		manager,
@@ -263,6 +351,17 @@ func _contains_error_prefix(errors: Array, prefix: String) -> bool:
 		if String(error_value).begins_with(prefix):
 			return true
 	return false
+
+
+func _non_center_managed_tiles(
+	manager,
+	settlement_id: String
+) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for tile_record in manager.managed_tiles(settlement_id):
+		if String(tile_record.get("settlement_id", "")).is_empty():
+			result.append(tile_record)
+	return result
 
 
 func _managed_tile_keys(
