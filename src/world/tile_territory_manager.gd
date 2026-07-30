@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 6
+const STATE_VERSION := 7
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -620,6 +620,286 @@ func complete_tile_facility_upgrade(
 	}
 
 
+func configure_city_construction(
+	settlement_id: String,
+	construction_power_per_turn: float,
+	resource_stockpile: Dictionary
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "건설 능력을 설정할 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	settlement_record["construction_power_per_turn"] = maxf(
+		0.0,
+		construction_power_per_turn
+	)
+	settlement_record["resource_stockpile"] = _normalized_stockpile(
+		resource_stockpile
+	)
+	settlement_record["construction_overflow"] = maxf(
+		0.0,
+		float(settlement_record.get("construction_overflow", 0.0))
+	)
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"construction_power_per_turn": settlement_record.construction_power_per_turn,
+		"resource_stockpile": settlement_record.resource_stockpile.duplicate(true),
+	}
+
+
+func queue_tile_facility_upgrade(
+	world_map,
+	settlement_id: String,
+	tile: Vector2i,
+	facility_id: String
+) -> Dictionary:
+	var quote := tile_facility_upgrade_quote(
+		world_map,
+		settlement_id,
+		tile,
+		facility_id
+	)
+	if not bool(quote.get("ok", false)):
+		return quote
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var queue: Array = settlement_record.get("tile_construction_queue", [])
+	var tile_key := String(quote.get("tile_key", ""))
+	for order_value in queue:
+		if order_value is not Dictionary:
+			continue
+		var order: Dictionary = order_value
+		if (
+			String(order.get("tile_key", "")) == tile_key
+			and String(order.get("facility_id", "")) == facility_id
+		):
+			return {
+				"ok": false,
+				"reason_code": "upgrade_already_queued",
+				"reason": "같은 타일 시설의 업그레이드가 이미 대기 중입니다.",
+			}
+	var costs: Dictionary = quote.get("costs", {})
+	var stockpile: Dictionary = settlement_record.get(
+		"resource_stockpile",
+		_normalized_stockpile({})
+	)
+	for resource_key in ["wood", "stone", "iron"]:
+		if float(stockpile.get(resource_key, 0.0)) < float(costs.get(resource_key, 0.0)):
+			return {
+				"ok": false,
+				"reason_code": "construction_resources_insufficient",
+				"reason": "도시의 %s 자원이 부족합니다." % resource_key,
+				"resource": resource_key,
+				"required": float(costs.get(resource_key, 0.0)),
+				"available": float(stockpile.get(resource_key, 0.0)),
+			}
+	for resource_key in ["wood", "stone", "iron"]:
+		stockpile[resource_key] = (
+			float(stockpile.get(resource_key, 0.0))
+			- float(costs.get(resource_key, 0.0))
+		)
+	var order_serial := maxi(
+		1,
+		int(settlement_record.get("next_construction_order_id", 1))
+	)
+	var order_id := "%s_tile_order_%d" % [settlement_id, order_serial]
+	var required_construction := maxf(
+		1.0,
+		float(costs.get("construction", 1.0))
+	)
+	var order := {
+		"id": order_id,
+		"kind": "tile_facility_upgrade",
+		"settlement_id": settlement_id,
+		"tile_key": tile_key,
+		"column": tile.x,
+		"row": tile.y,
+		"facility_id": facility_id,
+		"target_level": int(quote.get("target_level", 1)),
+		"required_construction": required_construction,
+		"remaining_construction": required_construction,
+		"reserved_costs": {
+			"wood": float(costs.get("wood", 0.0)),
+			"stone": float(costs.get("stone", 0.0)),
+			"iron": float(costs.get("iron", 0.0)),
+		},
+		"maintenance": float(quote.get("maintenance", 0.0)),
+		"state": "queued",
+	}
+	queue.append(order)
+	settlement_record["tile_construction_queue"] = queue
+	settlement_record["resource_stockpile"] = stockpile
+	settlement_record["next_construction_order_id"] = order_serial + 1
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"order": order.duplicate(true),
+		"queue_size": queue.size(),
+		"resource_stockpile": stockpile.duplicate(true),
+	}
+
+
+func advance_city_construction(
+	world_map,
+	settlement_id: String,
+	turns: int = 1
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "건설을 진행할 도시가 없습니다.",
+		}
+	if turns <= 0:
+		return {
+			"ok": false,
+			"reason_code": "turn_count_invalid",
+			"reason": "진행할 턴 수는 1 이상이어야 합니다.",
+		}
+	var completed: Array[Dictionary] = []
+	var blocked: Array[Dictionary] = []
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var queue: Array = settlement_record.get("tile_construction_queue", [])
+	var power := maxf(
+		0.0,
+		float(settlement_record.get("construction_power_per_turn", 0.0))
+	)
+	var overflow := maxf(
+		0.0,
+		float(settlement_record.get("construction_overflow", 0.0))
+	)
+	for turn_index in range(turns):
+		var budget := power + overflow
+		overflow = 0.0
+		while budget > 0.0 and not queue.is_empty():
+			var order: Dictionary = queue[0]
+			order["state"] = "building"
+			var remaining := maxf(
+				0.0,
+				float(order.get("remaining_construction", 0.0))
+			)
+			var spent := minf(budget, remaining)
+			budget -= spent
+			remaining -= spent
+			order["remaining_construction"] = remaining
+			if remaining > 0.0001:
+				queue[0] = order
+				break
+			var completion := complete_tile_facility_upgrade(
+				world_map,
+				settlement_id,
+				Vector2i(
+					int(order.get("column", -1)),
+					int(order.get("row", -1))
+				),
+				String(order.get("facility_id", "")),
+				int(order.get("target_level", -1))
+			)
+			if not bool(completion.get("ok", false)):
+				order["state"] = "blocked"
+				order["block_reason_code"] = String(
+					completion.get("reason_code", "completion_failed")
+				)
+				queue[0] = order
+				blocked.append(order.duplicate(true))
+				budget = 0.0
+				break
+			order["state"] = "completed"
+			order["remaining_construction"] = 0.0
+			order["completed_turn_offset"] = turn_index + 1
+			queue.pop_front()
+			completed.append(order.duplicate(true))
+		if queue.is_empty() and budget > 0.0:
+			overflow = minf(budget, power * 2.0)
+	settlement_record = _state.settlements[settlement_id]
+	settlement_record["tile_construction_queue"] = queue
+	settlement_record["construction_overflow"] = overflow
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": blocked.is_empty(),
+		"reason_code": "ok" if blocked.is_empty() else "construction_blocked",
+		"settlement_id": settlement_id,
+		"turns": turns,
+		"completed": completed,
+		"blocked": blocked,
+		"queue": queue.duplicate(true),
+		"construction_overflow": overflow,
+	}
+
+
+func cancel_tile_construction(
+	settlement_id: String,
+	order_id: String
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "건설 주문이 속한 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var queue: Array = settlement_record.get("tile_construction_queue", [])
+	for index in range(queue.size()):
+		var order_value = queue[index]
+		if order_value is not Dictionary:
+			continue
+		var order: Dictionary = order_value
+		if String(order.get("id", "")) != order_id:
+			continue
+		var stockpile: Dictionary = settlement_record.get(
+			"resource_stockpile",
+			_normalized_stockpile({})
+		)
+		for resource_key in ["wood", "stone", "iron"]:
+			stockpile[resource_key] = (
+				float(stockpile.get(resource_key, 0.0))
+				+ float(order.get("reserved_costs", {}).get(resource_key, 0.0))
+			)
+		queue.remove_at(index)
+		settlement_record["tile_construction_queue"] = queue
+		settlement_record["resource_stockpile"] = stockpile
+		_state.settlements[settlement_id] = settlement_record
+		return {
+			"ok": true,
+			"reason_code": "ok",
+			"order_id": order_id,
+			"resource_stockpile": stockpile.duplicate(true),
+		}
+	return {
+		"ok": false,
+		"reason_code": "construction_order_missing",
+		"reason": "취소할 건설 주문이 없습니다.",
+	}
+
+
+func city_construction_status(settlement_id: String) -> Dictionary:
+	var settlement_record: Dictionary = _state.get("settlements", {}).get(
+		settlement_id,
+		{}
+	)
+	if settlement_record.is_empty():
+		return {}
+	return {
+		"settlement_id": settlement_id,
+		"construction_power_per_turn": float(
+			settlement_record.get("construction_power_per_turn", 0.0)
+		),
+		"construction_overflow": float(
+			settlement_record.get("construction_overflow", 0.0)
+		),
+		"resource_stockpile":
+			settlement_record.get("resource_stockpile", {}).duplicate(true),
+		"queue":
+			settlement_record.get("tile_construction_queue", []).duplicate(true),
+	}
+
+
 func set_yield_modifiers(
 	settlement_id: String,
 	city_modifiers: Dictionary,
@@ -1054,6 +1334,44 @@ func validate_state(world_map) -> Dictionary:
 			errors.append("settlement_center_work_mode_invalid:%s" % settlement_key)
 		if String(settlement_record.get("region_id", "")) != _region_id(world_map, center):
 			errors.append("settlement_region_mismatch:%s" % settlement_key)
+		if float(settlement_record.get("construction_power_per_turn", 0.0)) < 0.0:
+			errors.append("settlement_construction_power_invalid:%s" % settlement_key)
+		if settlement_record.get("resource_stockpile", {}) is not Dictionary:
+			errors.append("settlement_stockpile_invalid:%s" % settlement_key)
+		var construction_queue_value = settlement_record.get(
+			"tile_construction_queue",
+			[]
+		)
+		if construction_queue_value is not Array:
+			errors.append("settlement_construction_queue_invalid:%s" % settlement_key)
+		else:
+			var order_ids: Dictionary = {}
+			for order_value in construction_queue_value:
+				if order_value is not Dictionary:
+					errors.append(
+						"construction_order_not_dictionary:%s" % settlement_key
+					)
+					continue
+				var order: Dictionary = order_value
+				var order_id := String(order.get("id", ""))
+				if order_id.is_empty() or order_ids.has(order_id):
+					errors.append(
+						"construction_order_id_invalid:%s" % settlement_key
+					)
+				order_ids[order_id] = true
+				if String(order.get("settlement_id", "")) != settlement_key:
+					errors.append(
+						"construction_order_settlement_mismatch:%s:%s"
+						% [settlement_key, order_id]
+					)
+				if (
+					float(order.get("remaining_construction", -1.0)) < 0.0
+					or not tiles.has(String(order.get("tile_key", "")))
+				):
+					errors.append(
+						"construction_order_state_invalid:%s:%s"
+						% [settlement_key, order_id]
+					)
 		for modifier_field in [
 			"city_yield_modifiers",
 			"technology_yield_modifiers",
@@ -1249,6 +1567,11 @@ func _found_validated_city(
 		"next_household_id": 1,
 		"city_yield_modifiers": {},
 		"technology_yield_modifiers": {},
+		"construction_power_per_turn": 0.0,
+		"construction_overflow": 0.0,
+		"resource_stockpile": {"wood": 0.0, "stone": 0.0, "iron": 0.0},
+		"tile_construction_queue": [],
+		"next_construction_order_id": 1,
 	}
 	_state.settlements[settlement_id] = settlement_record
 	_rebuild_regions()
@@ -1315,6 +1638,14 @@ func _make_tile_record(
 		"assigned_household_id": "",
 		"special_resources": [],
 		"facility_levels": {},
+	}
+
+
+func _normalized_stockpile(source: Dictionary) -> Dictionary:
+	return {
+		"wood": maxf(0.0, float(source.get("wood", 0.0))),
+		"stone": maxf(0.0, float(source.get("stone", 0.0))),
+		"iron": maxf(0.0, float(source.get("iron", 0.0))),
 	}
 
 
@@ -1499,6 +1830,25 @@ func _migrate_legacy_management_links() -> void:
 		var settlement_record: Dictionary = settlement_value
 		if settlement_record.get("households", {}) is not Dictionary:
 			settlement_record["households"] = {}
+		settlement_record["construction_power_per_turn"] = maxf(
+			0.0,
+			float(settlement_record.get("construction_power_per_turn", 0.0))
+		)
+		settlement_record["construction_overflow"] = maxf(
+			0.0,
+			float(settlement_record.get("construction_overflow", 0.0))
+		)
+		if settlement_record.get("resource_stockpile", {}) is not Dictionary:
+			settlement_record["resource_stockpile"] = {}
+		settlement_record["resource_stockpile"] = _normalized_stockpile(
+			settlement_record.get("resource_stockpile", {})
+		)
+		if settlement_record.get("tile_construction_queue", []) is not Array:
+			settlement_record["tile_construction_queue"] = []
+		settlement_record["next_construction_order_id"] = maxi(
+			1,
+			int(settlement_record.get("next_construction_order_id", 1))
+		)
 		if settlement_record.get("city_yield_modifiers", {}) is not Dictionary:
 			settlement_record["city_yield_modifiers"] = {}
 		if (

@@ -203,6 +203,68 @@ func _run() -> void:
 			int(work_tiles[0].get("column", -1)),
 			int(work_tiles[0].get("row", -1))
 		)
+		_expect(
+			bool(
+				manager.configure_city_construction(
+					String(first_city.get("id", "")),
+					10.0,
+					{"wood": 100.0, "stone": 100.0, "iron": 100.0}
+				).get("ok", false)
+			),
+			"도시에 턴당 건설력과 자원 비축량을 설정한다."
+		)
+		var queued_upgrade: Dictionary = manager.queue_tile_facility_upgrade(
+			world_map,
+			String(first_city.get("id", "")),
+			first_work_tile,
+			"farmland"
+		)
+		_expect(
+			bool(queued_upgrade.get("ok", false))
+			and float(
+				queued_upgrade.get("resource_stockpile", {}).get("wood", 100.0)
+			)
+			< 100.0,
+			"타일 업그레이드를 도시 대기열에 넣을 때 자원을 선예약한다."
+		)
+		var first_build_turn: Dictionary = manager.advance_city_construction(
+			world_map,
+			String(first_city.get("id", "")),
+			1
+		)
+		_expect(
+			first_build_turn.get("completed", []).is_empty()
+			and int(
+				manager.tile_state(world_map, first_work_tile).get(
+					"facility_levels",
+					{}
+				).get("farmland", 0)
+			)
+			== 0,
+			"건설력이 부족한 첫 턴에는 시설이 즉시 완공되지 않는다."
+		)
+		var second_build_turn: Dictionary = manager.advance_city_construction(
+			world_map,
+			String(first_city.get("id", "")),
+			1
+		)
+		_expect(
+			second_build_turn.get("completed", []).size() == 1
+			and int(
+				manager.tile_state(world_map, first_work_tile).get(
+					"facility_levels",
+					{}
+				).get("farmland", 0)
+			)
+			== 1,
+			"도시 건설력이 누적되면 FIFO 주문이 완공되어 타일에 반영된다."
+		)
+		_expect(
+			manager.city_construction_status(
+				String(first_city.get("id", ""))
+			).get("queue", []).is_empty(),
+			"완공된 타일 건설 주문은 도시 대기열에서 제거된다."
+		)
 		var second_work_tile := Vector2i(
 			int(work_tiles[1].get("column", -1)),
 			int(work_tiles[1].get("row", -1))
