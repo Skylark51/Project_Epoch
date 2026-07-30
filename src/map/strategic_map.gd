@@ -7,6 +7,8 @@ signal selection_changed(province_ids: Array[int])
 signal province_dropped(from_id: int, to_id: int)
 signal command_target_selected(province_id: int)
 signal city_selected(city_id: String)
+signal founding_site_selected(site_id: String)
+signal settlement_double_clicked(settlement_id: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
 
@@ -53,6 +55,29 @@ const StrategicMapPaletteScript = preload(
     "res://src/map/strategic_map_palette.gd"
 )
 
+const REGIONAL_PLACE_LABELS := {
+    "guknae_basin":["국내성","환도산성","압록강 나루","혼강 산길"],
+    "pyongyang_basin":["평양성","대성산성","대동강 나루","남강 교차로"],
+    "han_river_basin":["한성","북한산성","한강 나루","중랑 교차로"],
+    "yeongsan_basin":["영산 성읍","무등산성","영산강 나루","나주 들판"],
+    "gyeongju_basin":["금성","명활산성","형산강 나루","죽령 산길"],
+    "guya_basin":["구야 성읍","분산성","낙동강 하류","김해 철산"],
+    "daegaya_basin":["대가야 성읍","주산성","낙동강 상류","가야산 길"],
+    "aragaya_basin":["안라 성읍","성산산성","남강 나루","아라 들판"],
+    "liaodong_corridor":["요동성","백암성","요하 나루","천산 길"],
+    "qingzhou_corridor":["청주 치소","광고성","치수 나루","산동 염전"],
+    "tsukushi_plain":["쓰쿠시","미즈키","지쿠고강","하카타만"],
+    "kibi_plain":["기비","쓰쿠리야마","아사히강","세토 내해"],
+    "yamato_basin":["야마토","가쓰라기","야마토강","다케노우치 길"],
+}
+const CITY_VISUAL_PATHS := {
+    "camp":"res://assets/city_visuals/city_camp.svg",
+    "survey":"res://assets/city_visuals/city_stage_survey.svg",
+    "frame":"res://assets/city_visuals/city_stage_frame.svg",
+    "well_storage":"res://assets/city_visuals/city_well_storage.svg",
+    "farmland":"res://assets/city_visuals/city_farmland.svg",
+    "palisade":"res://assets/city_visuals/city_palisade.svg",
+}
 const PICK_BUCKET_SIZE := 160.0
 
 
@@ -109,7 +134,12 @@ var _world_rect := Rect2(0, 0, 800, 560)
 var _spatial_buckets: Dictionary = {}
 var _tile_spatial_buckets: Dictionary = {}
 var _screen_text_commands: Array[Dictionary] = []
-
+var founding_sites: Array[Dictionary] = []
+var selected_founding_site_id := ""
+var settlement_markers: Array[Dictionary] = []
+var _last_drawn_text_rects: Array[Rect2] = []
+var _last_drawn_texts: Array[String] = []
+var _city_visual_textures: Dictionary = {}
 var debug_map_enabled := false
 var show_chunk_boundaries := false
 var show_coast_highlight := false
@@ -122,6 +152,9 @@ func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
     focus_mode = Control.FOCUS_ALL
     clip_contents = true
+    for key in CITY_VISUAL_PATHS:
+        var path:=String(CITY_VISUAL_PATHS[key])
+        if ResourceLoader.exists(path): _city_visual_textures[key]=load(path)
     resized.connect(_clamp_pan)
 
 
@@ -209,17 +242,16 @@ func frame_world() -> void:
     queue_redraw()
 
 
-func focus_province(province_id: int) -> void:
+func focus_province(province_id: int, target_zoom := -1.0) -> void:
     var province: Dictionary = provinces.get(province_id, {})
     if province.is_empty():
         return
-
-    pan = StrategicMapGeometryScript.focus_pan(
-        size,
-        _province_center(province),
-        zoom
-    )
+    if target_zoom > 0.0:
+        zoom = clampf(target_zoom, min_zoom, max_zoom)
+    var center := _province_center(province)
+    pan = size * 0.5 - center * zoom
     _clamp_pan()
+    camera_changed.emit(zoom)
     queue_redraw()
 
 
@@ -316,6 +348,11 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 
 
 func _handle_left_button(event: InputEventMouseButton) -> void:
+    if event.pressed and event.double_click:
+        var settlement_id:=_settlement_at(event.position)
+        if not settlement_id.is_empty():
+            settlement_double_clicked.emit(settlement_id)
+            return
     if event.pressed:
         var province_id := _province_at(event.position)
         if (
@@ -414,6 +451,10 @@ func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
         return
 
     if button == MOUSE_BUTTON_LEFT:
+        var clicked_site := _founding_site_at(position)
+        if not clicked_site.is_empty():
+            founding_site_selected.emit(clicked_site)
+            return
         var clicked_city := _city_at(position)
         if not clicked_city.is_empty():
             city_selected.emit(clicked_city)
@@ -532,6 +573,92 @@ func _screen_to_world(point: Vector2) -> Vector2:
 
 # Picking --------------------------------------------------------------------
 
+func set_founding_sites(value: Array) -> void:
+    founding_sites.clear()
+    for site_value in value:
+        if site_value is Dictionary:
+            founding_sites.append(site_value.duplicate(true))
+    selected_founding_site_id = ""
+    queue_redraw()
+
+func select_founding_site(site_id: String) -> void:
+    selected_founding_site_id = site_id
+    queue_redraw()
+
+func clear_founding_sites() -> void:
+    founding_sites.clear()
+    selected_founding_site_id = ""
+    queue_redraw()
+
+func set_settlement_markers(value: Array) -> void:
+    settlement_markers.clear()
+    for marker_value in value:
+        if marker_value is Dictionary:
+            settlement_markers.append(marker_value.duplicate(true))
+    queue_redraw()
+func founding_site_candidates(province_id: int) -> Array[Dictionary]:
+    var specs: Array[Dictionary] = [
+        {"id":"waterside","letter":"A","name":"물길 가까운 터","summary":"식수와 교역로 확보가 쉽다.","tradeoff":"홍수와 기습에 취약하다.","bucket":"waterside"},
+        {"id":"farmland","letter":"B","name":"넓은 들판","summary":"경작지와 주거지를 빠르게 늘릴 수 있다.","tradeoff":"방어 시설에 더 많은 자재가 든다.","bucket":"farmland"},
+        {"id":"highland","letter":"C","name":"숲과 구릉의 목","summary":"감시와 방어에 유리하다.","tradeoff":"개간과 운송이 느리다.","bucket":"highland"},
+    ]
+    if world_map == null:
+        var province: Dictionary = provinces.get(province_id, {})
+        var center := _province_center(province)
+        var offsets := [Vector2(-52,24),Vector2(46,38),Vector2(8,-54)]
+        for index in range(specs.size()): specs[index]["position"]=center+offsets[index]
+        return specs
+    var buckets := {"waterside":[],"farmland":[],"highland":[],"all":[]}
+    for index_value in world_map.assigned_indices:
+        var tile_index:=int(index_value)
+        var row:=tile_index/world_map.width; var column:=tile_index%world_map.width
+        if world_map.province_id(column,row)!=province_id: continue
+        var terrain_id:=world_map.terrain_id(column,row)
+        if terrain_id<=2 or terrain_id==13: continue
+        var candidate:={"position":world_map.tile_center(column,row),"terrain":world_map.terrain_name(terrain_id)}
+        buckets.all.append(candidate)
+        if terrain_id in [4,5,10]: buckets.farmland.append(candidate)
+        if terrain_id in [6,7,8]: buckets.highland.append(candidate)
+        if _tile_touches_water(column,row): buckets.waterside.append(candidate)
+    var used:Array[Vector2]=[]; var result:Array[Dictionary]=[]
+    for spec_value in specs:
+        var spec:Dictionary=spec_value.duplicate(true)
+        var pool:Array=buckets.get(String(spec.bucket),[])
+        if pool.is_empty(): pool=buckets.all
+        var picked:=_spread_candidate(pool,used)
+        if picked.is_empty(): continue
+        var position:=Vector2(picked.position); used.append(position)
+        spec.position=position; spec.terrain=String(picked.get("terrain","unknown")); result.append(spec)
+    return result
+
+func _tile_touches_water(column:int,row:int) -> bool:
+    for offset in [Vector2i(-1,0),Vector2i(1,0),Vector2i(0,-1),Vector2i(0,1)]:
+        var terrain_id:=world_map.terrain_id(column+offset.x,row+offset.y)
+        if terrain_id<=2 or terrain_id==13: return true
+    return false
+
+func _spread_candidate(pool:Array,used:Array[Vector2]) -> Dictionary:
+    if pool.is_empty(): return {}
+    if used.is_empty(): return Dictionary(pool[int(pool.size()/2)]).duplicate(true)
+    var best:Dictionary={}; var best_distance:=-1.0
+    for candidate_value in pool:
+        var candidate:Dictionary=candidate_value; var position:=Vector2(candidate.position); var nearest:=INF
+        for used_position in used: nearest=minf(nearest,position.distance_to(used_position))
+        if nearest>best_distance: best_distance=nearest; best=candidate
+    return best.duplicate(true)
+
+func _settlement_at(screen_point:Vector2) -> String:
+    var world_position:=_screen_to_world(screen_point)
+    for marker in settlement_markers:
+        if world_position.distance_to(Vector2(marker.get("position",Vector2.ZERO)))<=26.0/maxf(zoom,0.01):
+            return String(marker.get("id",""))
+    return ""
+func _founding_site_at(screen_point:Vector2) -> String:
+    var world_position:=_screen_to_world(screen_point)
+    for site in founding_sites:
+        if world_position.distance_to(Vector2(site.get("position",Vector2.ZERO)))<=18.0/maxf(zoom,0.01):
+            return String(site.get("id",""))
+    return ""
 func _city_at(screen_point: Vector2) -> String:
     if world_map == null:
         return ""
@@ -619,6 +746,8 @@ func _draw() -> void:
     _draw_map_body(numeric_range)
     _draw_command_paths()
     _draw_icons_and_labels()
+    _draw_founding_sites()
+    _draw_settlement_markers()
 
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
     _draw_screen_text_commands()
@@ -665,63 +794,40 @@ func _draw_active_drag_feedback() -> void:
 
 # Screen-space text ----------------------------------------------------------
 
-func _queue_map_text(
-    world_position: Vector2,
-    text: String,
-    font_size: int,
-    color: Color,
-    screen_offset: Vector2 = Vector2.ZERO,
-    centered: bool = false
-) -> void:
+func _queue_map_text(world_position: Vector2, text: String, font_size: int, color: Color, screen_offset := Vector2.ZERO, centered := false, priority := 0) -> void:
     if text.is_empty():
         return
-
     _screen_text_commands.append({
         "world_position": world_position,
         "text": text,
         "font_size": font_size,
         "color": color,
         "screen_offset": screen_offset,
-        "centered": centered
+        "centered": centered,
+        "priority": priority,
     })
 
 
 func _draw_screen_text_commands() -> void:
     var font := ThemeDB.fallback_font
-    var visible_bounds := Rect2(Vector2.ZERO, size).grow(256.0)
-
-    for command in _screen_text_commands:
-        var screen_position := (
-            Vector2(command.get("world_position", Vector2.ZERO)) * zoom
-            + pan
-            + Vector2(command.get("screen_offset", Vector2.ZERO))
-        )
-        if not visible_bounds.has_point(screen_position):
-            continue
-
-        var text := String(command.get("text", ""))
-        var font_size := int(command.get("font_size", 14))
-        if bool(command.get("centered", false)):
-            var text_size := font.get_string_size(
-                text,
-                HORIZONTAL_ALIGNMENT_LEFT,
-                -1,
-                font_size
-            )
-            screen_position.x -= text_size.x * 0.5
-
-        draw_string(
-            font,
-            screen_position,
-            text,
-            HORIZONTAL_ALIGNMENT_LEFT,
-            -1,
-            font_size,
-            Color(command.get("color", Color.WHITE))
-        )
-
-
-# Geographic world-map rendering -------------------------------------------
+    var visible_bounds := Rect2(Vector2.ZERO, size).grow(24.0)
+    var commands:=_screen_text_commands.duplicate()
+    commands.sort_custom(func(a,b): return int(a.get("priority",0))>int(b.get("priority",0)))
+    _last_drawn_text_rects.clear(); _last_drawn_texts.clear()
+    for command in commands:
+        var screen_position: Vector2 = Vector2(command.get("world_position", Vector2.ZERO)) * zoom + pan + Vector2(command.get("screen_offset", Vector2.ZERO))
+        var text := String(command.get("text", "")); var font_size := int(command.get("font_size", 14))
+        var text_size:=font.get_string_size(text,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size)
+        if bool(command.get("centered", false)): screen_position.x-=text_size.x*0.5
+        var text_rect:=Rect2(screen_position-Vector2(2.0,float(font_size)+2.0),text_size+Vector2(4.0,6.0))
+        var collision_rect:=text_rect.grow(2.0)
+        if not visible_bounds.intersects(text_rect): continue
+        var overlaps:=false
+        for occupied in _last_drawn_text_rects:
+            if occupied.intersects(collision_rect): overlaps=true; break
+        if overlaps: continue
+        draw_string(font,screen_position,text,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,Color(command.get("color",Color.WHITE)))
+        _last_drawn_text_rects.append(collision_rect); _last_drawn_texts.append(text)
 
 func _draw_world_map(_numeric_range: Vector2) -> void:
     var world_view := Rect2(
@@ -746,6 +852,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
             _draw_coast_highlight(world_view)
 
     _draw_world_labels()
+    _draw_regional_place_labels()
     if show_region_ids:
         _draw_region_ids()
     _draw_cities()
@@ -880,6 +987,18 @@ func _draw_world_labels() -> void:
             true
         )
 
+
+func _draw_regional_place_labels() -> void:
+    if zoom < 1.05: return
+    var anchors:Dictionary=world_map.manifest.get("province_anchors",{})
+    var offsets:=[Vector2(-72,-52),Vector2(62,-44),Vector2(-58,50),Vector2(70,54)]
+    for source_id in REGIONAL_PLACE_LABELS.keys():
+        var anchor:Dictionary=anchors.get(source_id,{})
+        if anchor.is_empty(): continue
+        var center:=Vector2(float(anchor.get("map_x",0.0)),float(anchor.get("map_y",0.0)))*world_map.tile_size
+        var names:Array=REGIONAL_PLACE_LABELS[source_id]
+        for index in range(mini(names.size(),offsets.size())):
+            _queue_map_text(center+offsets[index],String(names[index]),11,Color("#c8bea0"),Vector2.ZERO,true,46)
 
 func _draw_cities() -> void:
     for city_value in world_map.cities:
@@ -1206,6 +1325,35 @@ func _draw_icons_and_labels() -> void:
             )
 
 
+func _draw_founding_sites() -> void:
+    for site in founding_sites:
+        var position:=Vector2(site.get("position",Vector2.ZERO))
+        var selected:=String(site.get("id",""))==selected_founding_site_id
+        var fill:=Color("#e5bd66") if selected else Color("#63b9b2")
+        var radius:=14.0/maxf(zoom,0.01)
+        draw_circle(position,radius,Color(0.04,0.07,0.08,0.92))
+        draw_arc(position,radius,0.0,TAU,24,fill,3.0/maxf(zoom,0.01),true)
+        draw_circle(position,4.0/maxf(zoom,0.01),fill)
+        _queue_map_text(position,"%s · %s" % [String(site.get("letter","?")),String(site.get("name","후보지"))],13,fill,Vector2(0,-22),true,100)
+func settlement_visual_key(marker:Dictionary) -> String:
+    var stage:=int(marker.get("stage",3))
+    if stage<=1: return "survey"
+    if stage==2: return "frame"
+    var appearance:=String(marker.get("appearance","camp"))
+    return appearance if CITY_VISUAL_PATHS.has(appearance) else "camp"
+
+func _draw_settlement_markers() -> void:
+    for marker in settlement_markers:
+        var position:=Vector2(marker.get("position",Vector2.ZERO))
+        var asset_key:=settlement_visual_key(marker); var texture:Texture2D=_city_visual_textures.get(asset_key)
+        var households:=int(marker.get("households",0)); var population_scale:=1.0+minf(float(households),30.0)/150.0
+        var screen_scale:=population_scale/maxf(zoom,0.01); var target_size:=Vector2(96,72)*screen_scale
+        if texture!=null:
+            draw_texture_rect(texture,Rect2(position-target_size*Vector2(0.5,0.68),target_size),false)
+        else:
+            draw_circle(position,22.0*screen_scale,Color("#a17b4d")); draw_arc(position,22.0*screen_scale,0.0,TAU,24,Color("#e5bd66"),2.4*screen_scale,true)
+        var stage:=int(marker.get("stage",3)); var stage_suffix:=" · 공사 %d/3" % stage if stage<3 else ""
+        _queue_map_text(position,String(marker.get("name","첫 도시"))+stage_suffix,14,Color("#f1d58b"),Vector2(0,-42*population_scale),true,120)
 func _draw_command_paths() -> void:
     for path in _command_paths:
         var from_id := int(path.get("from_id", -1))

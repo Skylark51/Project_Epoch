@@ -287,6 +287,24 @@ func governance_save_data() -> Dictionary:
     return game.state.governance_state.duplicate(true)
 
 
+func set_campaign_save_data(data: Dictionary) -> void:
+    if game.state == null:
+        return
+
+    var metadata: Dictionary = game.state.metadata.duplicate(true)
+    metadata["project_epoch_campaign"] = data.duplicate(true)
+    game.state.metadata = metadata
+
+
+func campaign_save_data() -> Dictionary:
+    if game.state == null:
+        return {}
+
+    var metadata: Dictionary = game.state.metadata
+    var saved = metadata.get("project_epoch_campaign", {})
+    return saved.duplicate(true) if saved is Dictionary else {}
+
+
 func save_autosave() -> Dictionary:
     if game.state == null:
         return {

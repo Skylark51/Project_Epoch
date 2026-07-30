@@ -48,10 +48,14 @@ func _init(strategy_gateway) -> void:
 
 func number(value: int) -> String:
     if abs(value) >= 1_000_000:
-        return "%.1fM" % (float(value) / 1_000_000.0)
+        return "%.1fM" % _truncate_decimal(float(value) / 1_000_000.0)
     if abs(value) >= 1_000:
-        return "%.1fK" % (float(value) / 1_000.0)
+        return "%.1fK" % _truncate_decimal(float(value) / 1_000.0)
     return str(value)
+
+
+func _truncate_decimal(value: float) -> float:
+    return signf(value) * floorf(absf(value) * 10.0) / 10.0
 
 
 func country_name(country_id: String) -> String:
