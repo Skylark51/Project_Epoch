@@ -94,10 +94,8 @@ func open_dialogue(country_id: String) -> bool:
         return false
 
     var definition: Dictionary = ruler_catalog.get(country_id, {})
-    var texture_path := String(definition.get("portrait", ""))
-    var texture = load(texture_path)
-    if texture is not Texture2D:
-        push_error("RulerDialogueOverlay: 군주 초상 텍스처를 불러오지 못했습니다: %s" % texture_path)
+    var texture := _load_portrait_texture(definition)
+    if texture == null:
         return false
 
     current_ruler = definition.duplicate(true)
@@ -142,6 +140,35 @@ func _load_catalog() -> void:
         ruler_catalog = parsed
     else:
         push_error("RulerDialogueOverlay: 군주 대화 목록 형식이 올바르지 않습니다.")
+
+
+func _load_portrait_texture(definition: Dictionary) -> Texture2D:
+    var direct_path := String(definition.get("portrait", ""))
+    if not direct_path.is_empty():
+        var direct_texture = load(direct_path)
+        if direct_texture is Texture2D:
+            return direct_texture
+
+    var encoded_parts := PackedStringArray()
+    for part_path_value in definition.get("portrait_parts", []):
+        var part_path := String(part_path_value)
+        var part_file := FileAccess.open(part_path, FileAccess.READ)
+        if part_file == null:
+            push_error("RulerDialogueOverlay: 초상 데이터 조각을 열 수 없습니다: %s" % part_path)
+            return null
+        encoded_parts.append(part_file.get_as_text().strip_edges())
+
+    if encoded_parts.is_empty():
+        push_error("RulerDialogueOverlay: 초상 데이터가 정의되지 않았습니다.")
+        return null
+
+    var raw_png := Marshalls.base64_to_raw("".join(encoded_parts))
+    var image := Image.new()
+    var load_error := image.load_png_from_buffer(raw_png)
+    if load_error != OK:
+        push_error("RulerDialogueOverlay: 초상 PNG 복원에 실패했습니다: %s" % error_string(load_error))
+        return null
+    return ImageTexture.create_from_image(image)
 
 
 func _build_overlay() -> void:
@@ -319,8 +346,8 @@ func _set_frame(frame_index: int) -> void:
         return
 
     var columns := int(current_ruler.get("columns", 5))
-    var frame_width := int(current_ruler.get("frame_width", 256))
-    var frame_height := int(current_ruler.get("frame_height", 256))
+    var frame_width := int(current_ruler.get("frame_width", 64))
+    var frame_height := int(current_ruler.get("frame_height", 64))
     var column := frame_index % columns
     var row := int(frame_index / columns)
     portrait_atlas.region = Rect2(
