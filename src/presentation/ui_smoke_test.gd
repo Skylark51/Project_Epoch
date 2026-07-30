@@ -44,17 +44,36 @@ func _run() -> void:
     check(app.selected_province==1,"left click selects a Province")
     var old_zoom:=map.zoom; var wheel:=InputEventMouseButton.new(); wheel.button_index=MOUSE_BUTTON_WHEEL_UP; wheel.pressed=true; wheel.position=map.size*0.5; map._gui_input(wheel)
     check(map.zoom>old_zoom,"wheel zooms toward mouse position")
+    map.zoom=maxf(map.zoom,0.5); map.focus_province(1)
+    var pan_before_left_drag:=map.pan
+    var selected_before_left_drag: int = app.selected_province
+    var left_drag_press:=InputEventMouseButton.new(); left_drag_press.button_index=MOUSE_BUTTON_LEFT; left_drag_press.pressed=true; left_drag_press.position=map.size*0.5; map._gui_input(left_drag_press)
+    var left_drag_motion:=InputEventMouseMotion.new(); left_drag_motion.position=left_drag_press.position+Vector2(40,24); map._gui_input(left_drag_motion)
+    var left_drag_release:=InputEventMouseButton.new(); left_drag_release.button_index=MOUSE_BUTTON_LEFT; left_drag_release.pressed=false; left_drag_release.position=left_drag_motion.position; map._gui_input(left_drag_release)
+    check(map.pan.distance_to(pan_before_left_drag)>5.0,"holding and dragging the left mouse button pans the map")
+    check(app.selected_province==selected_before_left_drag,"left-button panning does not change Province selection")
     check(not map._spatial_buckets.is_empty(),"Province spatial picking index is built")
-    check(map.map_tiles.size()==28*18 and not map._tile_spatial_buckets.is_empty(),"continuous hex tile picking index is built")
     var sea_pick_checked:=false
-    for tile_value in map.map_tiles:
-        if tile_value is Dictionary and bool(tile_value.get("water",false)):
-            var sea_center:=Vector2.ZERO
-            for point in tile_value.get("polygon",[]): sea_center+=Vector2(float(point[0]),float(point[1]))
-            sea_center/=6.0
-            check(map._province_at(sea_center*map.zoom+map.pan)==-1,"sea tiles are visible but not selectable as Provinces")
-            sea_pick_checked=true
-            break
+    if map.world_map != null:
+        check(map.world_map.width==640 and map.world_map.height==480,"geographic world map is loaded for interaction")
+        for row in range(map.world_map.height):
+            for column in range(map.world_map.width):
+                if map.world_map.terrain_id(column,row)<=2 and map.world_map.province_id(column,row)==-1:
+                    var sea_center:=(Vector2(column,row)+Vector2(0.5,0.5))*map.world_map.tile_size
+                    check(map._province_at(sea_center*map.zoom+map.pan)==-1,"sea tiles are visible but not selectable as Provinces")
+                    sea_pick_checked=true
+                    break
+            if sea_pick_checked: break
+    else:
+        check(map.map_tiles.size()==28*18 and not map._tile_spatial_buckets.is_empty(),"continuous hex tile picking index is built")
+        for tile_value in map.map_tiles:
+            if tile_value is Dictionary and bool(tile_value.get("water",false)):
+                var sea_center:=Vector2.ZERO
+                for point in tile_value.get("polygon",[]): sea_center+=Vector2(float(point[0]),float(point[1]))
+                sea_center/=6.0
+                check(map._province_at(sea_center*map.zoom+map.pan)==-1,"sea tiles are visible but not selectable as Provinces")
+                sea_pick_checked=true
+                break
     check(sea_pick_checked,"at least one sea tile is available for interaction validation")
     map.set_interaction_state(StrategicMap.InputState.CHOOSING_MOVE_TARGET,1)
     var drag_press:=InputEventMouseButton.new(); drag_press.button_index=MOUSE_BUTTON_RIGHT; drag_press.pressed=true; drag_press.position=map.size*0.5; map._gui_input(drag_press)

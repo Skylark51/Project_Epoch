@@ -173,34 +173,26 @@ func _gui_input(event: InputEvent) -> void:
             _zoom_at(button.position, 1.14); accept_event()
         elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN and button.pressed:
             _zoom_at(button.position, 1.0 / 1.14); accept_event()
-        elif button.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
-            if button.pressed:
-                _drag_button = button.button_index; _drag_origin = button.position; _pan_origin = pan; _did_drag = false
-            else:
-                if _drag_button == button.button_index and not _did_drag and button.button_index == MOUSE_BUTTON_RIGHT:
-                    _handle_target_click(_province_at(button.position))
-                _drag_button = MOUSE_BUTTON_NONE
-                if input_state == InputState.DRAGGING_MAP: input_state = _state_before_drag
-            accept_event()
         elif button.button_index == MOUSE_BUTTON_LEFT:
             if button.pressed:
-                var clicked_city := _city_at(button.position)
-                if not clicked_city.is_empty():
-                    city_selected.emit(clicked_city)
                 var province_id := _province_at(button.position)
                 if button.ctrl_pressed and province_id != -1 and input_state == InputState.IDLE:
                     _command_drag = true; _drag_source_id = province_id; _selection_origin = button.position; _selection_current = button.position
-                elif input_state in [InputState.CHOOSING_MOVE_TARGET, InputState.CHOOSING_ATTACK_TARGET, InputState.SELECTING_PEACE_TERMS]:
-                    _handle_target_click(province_id)
                 else:
-                    _selection_dragging = true; _selection_origin = button.position; _selection_current = button.position
                     _selection_additive = button.shift_pressed
+                    _begin_map_drag(button.button_index, button.position)
             elif _command_drag:
                 var target_id := _province_at(button.position)
                 if target_id != -1 and target_id != _drag_source_id: province_dropped.emit(_drag_source_id, target_id)
                 _command_drag = false; _drag_source_id = -1; queue_redraw()
-            elif _selection_dragging:
-                _finish_selection(button.position)
+            else:
+                _finish_map_drag(button.button_index, button.position)
+            accept_event()
+        elif button.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
+            if button.pressed:
+                _begin_map_drag(button.button_index, button.position)
+            else:
+                _finish_map_drag(button.button_index, button.position)
             accept_event()
     elif event is InputEventMouseMotion:
         var motion := event as InputEventMouseMotion
@@ -219,6 +211,33 @@ func _gui_input(event: InputEvent) -> void:
             if next_hover != _hovered_id:
                 _hovered_id = next_hover; tooltip_changed.emit(_tooltip_for(next_hover), motion.global_position); queue_redraw()
 
+func _begin_map_drag(button: MouseButton, position: Vector2) -> void:
+    _drag_button = button
+    _drag_origin = position
+    _pan_origin = pan
+    _did_drag = false
+
+func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
+    if _drag_button != button:
+        return
+    var did_drag := _did_drag
+    _drag_button = MOUSE_BUTTON_NONE
+    if input_state == InputState.DRAGGING_MAP:
+        input_state = _state_before_drag
+    if did_drag:
+        return
+    if button == MOUSE_BUTTON_RIGHT:
+        _handle_target_click(_province_at(position))
+    elif button == MOUSE_BUTTON_LEFT:
+        var clicked_city := _city_at(position)
+        if not clicked_city.is_empty():
+            city_selected.emit(clicked_city)
+        var province_id := _province_at(position)
+        if input_state in [InputState.CHOOSING_MOVE_TARGET, InputState.CHOOSING_ATTACK_TARGET, InputState.SELECTING_PEACE_TERMS]:
+            _handle_target_click(province_id)
+        else:
+            _selection_origin = position
+            _finish_selection(position)
 func _finish_selection(position: Vector2) -> void:
     _selection_current = position; _selection_dragging = false
     var next: Array[int] = []
