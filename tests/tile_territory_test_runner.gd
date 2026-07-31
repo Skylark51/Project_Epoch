@@ -403,6 +403,57 @@ func _run() -> void:
 			_has_border_between(borders, first_id, second_id, "national_border"),
 			"서로 다른 국가의 도시 영향권 사이에 타일 단위 국경을 만든다."
 		)
+		var transferable_tile := _border_tile_for_settlement(
+			borders,
+			first_id,
+			second_id
+		)
+		_expect(
+			transferable_tile.x >= 0,
+			"두 도시 국경에서 명시적으로 이전할 비중심 타일을 찾는다."
+		)
+		if transferable_tile.x >= 0:
+			var stable_before := manager.tile_state(world_map, transferable_tile)
+			manager.expand_city_influence(world_map, second_id, 2)
+			var stable_after := manager.tile_state(world_map, transferable_tile)
+			_expect(
+				String(stable_before.get("managing_settlement_id", ""))
+				== String(stable_after.get("managing_settlement_id", "")),
+				"영향권을 다시 계산해도 기존 국경은 수동으로 이동하지 않는다."
+			)
+			var transfer: Dictionary = manager.transfer_tile_affiliation(
+				world_map,
+				transferable_tile,
+				second_id,
+				"baekje",
+				"treaty",
+				"test_treaty_001"
+			)
+			_expect(
+				bool(transfer.get("ok", false))
+				and int(transfer.get("border_revision", 0)) == 1,
+				"조약 이벤트로만 타일의 정치 소유권과 관리 도시를 이전한다."
+			)
+			var transferred_state := manager.tile_state(
+				world_map,
+				transferable_tile
+			)
+			_expect(
+				String(transferred_state.get("political_owner_id", "")) == "baekje"
+				and String(
+					transferred_state.get("managing_settlement_id", "")
+				)
+				== second_id,
+				"이전된 타일은 새 소유국과 새 관리 도시를 함께 기록한다."
+			)
+			_expect(
+				manager.border_events().size() == 1
+				and String(
+					manager.border_events()[0].get("event_id", "")
+				)
+				== "test_treaty_001",
+				"국경 변경 이력을 단조 증가 리비전으로 남긴다."
+			)
 	var duplicate_capital: Dictionary = manager.found_initial_city(
 		world_map,
 		first_tile,
@@ -560,6 +611,21 @@ func _no_shared_keys(first: Dictionary, second: Dictionary) -> bool:
 		if second.has(key):
 			return false
 	return true
+
+
+func _border_tile_for_settlement(
+	borders: Array[Dictionary],
+	first_id: String,
+	second_id: String
+) -> Vector2i:
+	for border in borders:
+		var edge_first := String(border.get("first_settlement_id", ""))
+		var edge_second := String(border.get("second_settlement_id", ""))
+		if edge_first == first_id and edge_second == second_id:
+			return Vector2i(border.get("from_tile", Vector2i(-1, -1)))
+		if edge_first == second_id and edge_second == first_id:
+			return Vector2i(border.get("to_tile", Vector2i(-1, -1)))
+	return Vector2i(-1, -1)
 
 
 func _has_border_between(

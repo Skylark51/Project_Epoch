@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 7
+const STATE_VERSION := 8
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -59,6 +59,8 @@ func reset() -> void:
 		"tiles": {},
 		"settlements": {},
 		"regions": {},
+		"border_events": [],
+		"next_border_revision": 1,
 		"next_settlement_id": 1,
 	}
 
@@ -73,6 +75,12 @@ func load_snapshot(source: Dictionary) -> void:
 	for key in ["tiles", "settlements", "regions"]:
 		if _state.get(key, {}) is not Dictionary:
 			_state[key] = {}
+	if _state.get("border_events", []) is not Array:
+		_state["border_events"] = []
+	_state["next_border_revision"] = maxi(
+		1,
+		int(_state.get("next_border_revision", 1))
+	)
 	_migrate_legacy_management_links()
 	_state["next_settlement_id"] = _normalized_next_settlement_id(
 		int(_state.get("next_settlement_id", 1))
@@ -428,6 +436,122 @@ func border_edges(
 				)
 			)
 	return result
+
+
+func border_events() -> Array:
+	return _state.get("border_events", []).duplicate(true)
+
+
+func transfer_tile_affiliation(
+	world_map,
+	tile: Vector2i,
+	new_settlement_id: String,
+	new_political_owner_id: String,
+	event_type: String,
+	event_id: String
+) -> Dictionary:
+	if event_type not in ["treaty", "tile_transfer", "administrative_transfer"]:
+		return {
+			"ok": false,
+			"reason_code": "border_event_type_invalid",
+			"reason": "국경 변경은 조약·타일 양도·행정 이전으로만 실행할 수 있습니다.",
+		}
+	if event_id.strip_edges().is_empty():
+		return {
+			"ok": false,
+			"reason_code": "border_event_id_missing",
+			"reason": "국경 변경 이벤트 식별자가 필요합니다.",
+		}
+	if not _state.get("settlements", {}).has(new_settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "타일을 넘겨받을 도시가 없습니다.",
+		}
+	var new_settlement: Dictionary = _state.settlements[new_settlement_id]
+	if (
+		new_political_owner_id.is_empty()
+		or String(new_settlement.get("owner_id", "")) != new_political_owner_id
+	):
+		return {
+			"ok": false,
+			"reason_code": "owner_manager_mismatch",
+			"reason": "정치적 소유국과 새 관리 도시의 소유국이 일치해야 합니다.",
+		}
+	var tile_check := _validate_existing_tile(world_map, tile)
+	if not bool(tile_check.get("ok", false)):
+		return tile_check
+	var key := String(tile_check.get("tile_key", ""))
+	var tile_record: Dictionary = tile_check.get("tile_record", {})
+	var old_settlement_id := String(
+		tile_record.get("managing_settlement_id", "")
+	)
+	var old_owner_id := String(tile_record.get("political_owner_id", ""))
+	if old_owner_id.is_empty():
+		old_owner_id = String(tile_record.get("owner_id", ""))
+	if String(tile_record.get("settlement_id", "")) == old_settlement_id:
+		return {
+			"ok": false,
+			"reason_code": "city_center_transfer_requires_city_event",
+			"reason": "도시 중심 타일은 일반 타일 양도로 이전할 수 없습니다.",
+		}
+	if not String(tile_record.get("assigned_household_id", "")).is_empty():
+		return {
+			"ok": false,
+			"reason_code": "tile_household_assigned",
+			"reason": "가구 작업을 먼저 해제해야 타일을 이전할 수 있습니다.",
+		}
+	if _tile_has_construction_order(old_settlement_id, key):
+		return {
+			"ok": false,
+			"reason_code": "tile_construction_pending",
+			"reason": "진행 중인 타일 건설 주문을 먼저 취소해야 합니다.",
+		}
+	if (
+		old_settlement_id == new_settlement_id
+		and old_owner_id == new_political_owner_id
+	):
+		return {
+			"ok": true,
+			"reason_code": "no_change",
+			"tile_key": key,
+			"border_revision": int(tile_record.get("border_revision", 0)),
+		}
+	_remove_claimed_tile_from_settlement(old_settlement_id, key)
+	_add_claimed_tile_to_settlement(new_settlement_id, key)
+	var revision := maxi(1, int(_state.get("next_border_revision", 1)))
+	var border_event := {
+		"revision": revision,
+		"event_id": event_id,
+		"event_type": event_type,
+		"tile_key": key,
+		"column": tile.x,
+		"row": tile.y,
+		"from_settlement_id": old_settlement_id,
+		"to_settlement_id": new_settlement_id,
+		"from_owner_id": old_owner_id,
+		"to_owner_id": new_political_owner_id,
+	}
+	tile_record["owner_id"] = new_political_owner_id
+	tile_record["political_owner_id"] = new_political_owner_id
+	tile_record["managing_settlement_id"] = new_settlement_id
+	tile_record["border_revision"] = revision
+	tile_record["last_border_event"] = border_event.duplicate(true)
+	tile_record["worked"] = false
+	tile_record["work_mode"] = "unworked"
+	tile_record["assigned_household_id"] = ""
+	_state.tiles[key] = tile_record
+	_state.border_events.append(border_event)
+	_state["next_border_revision"] = revision + 1
+	_rebuild_regions()
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"tile_key": key,
+		"border_revision": revision,
+		"event": border_event.duplicate(true),
+		"tile_record": tile_record.duplicate(true),
+	}
 
 
 func configure_tile_yield_sources(
@@ -1229,6 +1353,13 @@ func validate_state(world_map) -> Dictionary:
 			errors.append("tile_key_mismatch:%s" % tile_key)
 		if String(tile_record.get("owner_id", "")).is_empty():
 			errors.append("tile_owner_missing:%s" % tile_key)
+		if (
+			String(tile_record.get("political_owner_id", ""))
+			!= String(tile_record.get("owner_id", ""))
+		):
+			errors.append("tile_political_owner_mismatch:%s" % tile_key)
+		if int(tile_record.get("border_revision", 0)) < 0:
+			errors.append("tile_border_revision_invalid:%s" % tile_key)
 		if String(tile_record.get("region_id", "")) != _region_id(world_map, tile):
 			errors.append("tile_region_mismatch:%s" % tile_key)
 		var linked_settlement_id := String(tile_record.get("settlement_id", ""))
@@ -1499,6 +1630,24 @@ func validate_state(world_map) -> Dictionary:
 				errors.append("region_settlement_missing:%s:%s" % [region_key, settlement_id])
 			elif String(settlements[settlement_id].get("region_id", "")) != region_key:
 				errors.append("region_settlement_mismatch:%s:%s" % [region_key, settlement_id])
+	var seen_border_revisions: Dictionary = {}
+	var previous_revision := 0
+	for event_value in _state.get("border_events", []):
+		if event_value is not Dictionary:
+			errors.append("border_event_not_dictionary")
+			continue
+		var event: Dictionary = event_value
+		var revision := int(event.get("revision", 0))
+		if (
+			revision <= previous_revision
+			or seen_border_revisions.has(revision)
+			or String(event.get("event_id", "")).is_empty()
+		):
+			errors.append("border_event_revision_invalid:%d" % revision)
+		seen_border_revisions[revision] = true
+		previous_revision = maxi(previous_revision, revision)
+	if int(_state.get("next_border_revision", 0)) <= previous_revision:
+		errors.append("next_border_revision_invalid")
 	if int(_state.get("next_settlement_id", 0)) < 1:
 		errors.append("next_settlement_id_invalid")
 	return {
@@ -1628,6 +1777,7 @@ func _make_tile_record(
 		"column": tile.x,
 		"row": tile.y,
 		"owner_id": owner_id,
+		"political_owner_id": owner_id,
 		"region_id": _region_id(world_map, tile),
 		"province_id": int(world_map.province_id(tile.x, tile.y)),
 		"terrain_id": int(world_map.terrain_id(tile.x, tile.y)),
@@ -1638,7 +1788,74 @@ func _make_tile_record(
 		"assigned_household_id": "",
 		"special_resources": [],
 		"facility_levels": {},
+		"border_revision": 0,
+		"last_border_event": {},
 	}
+
+
+func _validate_existing_tile(world_map, tile: Vector2i) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {
+			"ok": false,
+			"reason_code": "tile_out_of_bounds",
+			"reason": "타일이 지도 안에 없습니다.",
+		}
+	var key := _tile_key(world_map, tile)
+	var tile_record: Dictionary = _state.get("tiles", {}).get(key, {})
+	if tile_record.is_empty():
+		return {
+			"ok": false,
+			"reason_code": "tile_unclaimed",
+			"reason": "어느 도시에도 귀속되지 않은 타일입니다.",
+		}
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"tile_key": key,
+		"tile_record": tile_record,
+	}
+
+
+func _tile_has_construction_order(settlement_id: String, tile_key: String) -> bool:
+	var settlement_record: Dictionary = _state.get("settlements", {}).get(
+		settlement_id,
+		{}
+	)
+	for order_value in settlement_record.get("tile_construction_queue", []):
+		if (
+			order_value is Dictionary
+			and String(order_value.get("tile_key", "")) == tile_key
+		):
+			return true
+	return false
+
+
+func _remove_claimed_tile_from_settlement(
+	settlement_id: String,
+	tile_key: String
+) -> void:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var claimed: Array = settlement_record.get("claimed_tile_keys", [])
+	claimed.erase(tile_key)
+	settlement_record["claimed_tile_keys"] = claimed
+	_state.settlements[settlement_id] = settlement_record
+
+
+func _add_claimed_tile_to_settlement(
+	settlement_id: String,
+	tile_key: String
+) -> void:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var claimed: Array = settlement_record.get("claimed_tile_keys", [])
+	if tile_key not in claimed:
+		claimed.append(tile_key)
+	claimed.sort()
+	settlement_record["claimed_tile_keys"] = claimed
+	_state.settlements[settlement_id] = settlement_record
 
 
 func _normalized_stockpile(source: Dictionary) -> Dictionary:
@@ -1875,6 +2092,18 @@ func _migrate_legacy_management_links() -> void:
 			if not tiles.has(claimed_key):
 				continue
 			var tile_record: Dictionary = tiles[claimed_key]
+			var owner_id := String(tile_record.get("owner_id", ""))
+			if String(tile_record.get("political_owner_id", "")).is_empty():
+				tile_record["political_owner_id"] = owner_id
+			tile_record["owner_id"] = String(
+				tile_record.get("political_owner_id", owner_id)
+			)
+			tile_record["border_revision"] = maxi(
+				0,
+				int(tile_record.get("border_revision", 0))
+			)
+			if tile_record.get("last_border_event", {}) is not Dictionary:
+				tile_record["last_border_event"] = {}
 			if tile_record.get("special_resources", []) is not Array:
 				tile_record["special_resources"] = []
 			if tile_record.get("facility_levels", {}) is not Dictionary:
