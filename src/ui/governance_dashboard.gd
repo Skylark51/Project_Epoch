@@ -82,33 +82,31 @@ func _process(_delta: float) -> void:
 
 
 func _build_overlay() -> void:
+    var host: Node = self
+    var base_ui_refs = base_ui.get("ui")
+    if base_ui_refs is Dictionary and base_ui_refs.has("governance_slot"):
+        var slot_value = base_ui_refs.get("governance_slot")
+        if slot_value is Container:
+            host = slot_value
     launcher = Button.new()
     launcher.name = "GovernanceLauncher"
     launcher.text = "⚖ 통치 · 반란"
-    launcher.anchor_left = 1.0
-    launcher.anchor_right = 1.0
-    launcher.offset_left = -420.0
-    launcher.offset_right = -280.0
-    launcher.offset_top = 10.0
-    launcher.offset_bottom = 50.0
+    launcher.custom_minimum_size.y = 40.0
+    launcher.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     launcher.z_index = 250
     launcher.visible = false
     launcher.pressed.connect(_open_dashboard)
-    add_child(launcher)
+    host.add_child(launcher)
 
     badge = Label.new()
     badge.name = "GovernanceStatusBadge"
-    badge.anchor_left = 1.0
-    badge.anchor_right = 1.0
-    badge.offset_left = -275.0
-    badge.offset_right = -205.0
-    badge.offset_top = 18.0
-    badge.offset_bottom = 42.0
+    badge.custom_minimum_size.y = 24.0
+    badge.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
     badge.z_index = 251
     badge.visible = false
-    add_child(badge)
+    host.add_child(badge)
 
     dashboard = Window.new()
     dashboard.name = "GovernanceDashboard"

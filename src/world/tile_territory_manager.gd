@@ -995,6 +995,8 @@ func configure_tile_yield_sources(
 		normalized_resources.append(
 			{
 				"id": resource_id,
+				"name": String(resource.get("name", resource_id)),
+				"category": String(resource.get("category", "bonus")),
 				"yields": _normalized_yields(resource.get("yields", {})),
 			}
 		)
@@ -2224,6 +2226,11 @@ func _make_tile_record(
 ) -> Dictionary:
 	var key := _tile_key(world_map, tile)
 	var neutral_record: Dictionary = _state.get("neutral_tiles", {}).get(key, {})
+	var special_resources: Array = neutral_record.get("special_resources", []).duplicate(true)
+	if special_resources.is_empty() and world_map.has_method("resource_at"):
+		var generated_resource: Dictionary = world_map.resource_at(tile.x, tile.y)
+		if not generated_resource.is_empty():
+			special_resources.append(generated_resource)
 	var record := {
 		"column": tile.x,
 		"row": tile.y,
@@ -2240,7 +2247,7 @@ func _make_tile_record(
 		"worked": not settlement_id.is_empty(),
 		"work_mode": "city_center" if not settlement_id.is_empty() else "unworked",
 		"assigned_household_id": "",
-		"special_resources": neutral_record.get("special_resources", []).duplicate(true),
+		"special_resources": special_resources,
 		"facility_levels": neutral_record.get("facility_levels", {}).duplicate(true),
 		"border_revision": int(neutral_record.get("border_revision", 0)),
 		"last_border_event": neutral_record.get("last_border_event", {}).duplicate(true),

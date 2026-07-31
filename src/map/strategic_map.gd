@@ -8,6 +8,7 @@ signal province_dropped(from_id: int, to_id: int)
 signal command_target_selected(province_id: int)
 signal city_selected(city_id: String)
 signal founding_site_selected(site_id: String)
+signal founding_tile_selected(tile: Vector2i)
 signal settlement_double_clicked(settlement_id: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
@@ -34,6 +35,7 @@ const MODE_LABELS := {
     "stability": "안정도",
     "revolt": "반란 위험",
     "terrain": "지형",
+    "resources": "타일 자원",
     "fort": "요새",
     "supply": "보급"
 }
@@ -112,6 +114,7 @@ var _drag_source_id := -1
 var _command_paths: Array[Dictionary] = []
 var _peace_demands: Array[int] = []
 var _hovered_id := -1
+var _hovered_tile := Vector2i(-1, -1)
 
 
 # Camera and drag state -------------------------------------------------------
@@ -136,6 +139,9 @@ var _tile_spatial_buckets: Dictionary = {}
 var _screen_text_commands: Array[Dictionary] = []
 var founding_sites: Array[Dictionary] = []
 var selected_founding_site_id := ""
+var founding_tile_selection_enabled := false
+var founding_tile_selection_province_id := -1
+var selected_founding_tile := Vector2i(-1, -1)
 var settlement_markers: Array[Dictionary] = []
 var _last_drawn_text_rects: Array[Rect2] = []
 var _last_drawn_texts: Array[String] = []
@@ -401,12 +407,14 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
         return
 
     var next_hovered_id := _province_at(event.position)
-    if next_hovered_id == _hovered_id:
+    var next_hovered_tile := tile_at_screen(event.position)
+    if next_hovered_id == _hovered_id and next_hovered_tile == _hovered_tile:
         return
 
     _hovered_id = next_hovered_id
+    _hovered_tile = next_hovered_tile
     tooltip_changed.emit(
-        _tooltip_for(next_hovered_id),
+        _tooltip_for_tile(next_hovered_tile, next_hovered_id),
         event.global_position
     )
     queue_redraw()
@@ -451,6 +459,11 @@ func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
         return
 
     if button == MOUSE_BUTTON_LEFT:
+        if founding_tile_selection_enabled:
+            var clicked_tile := tile_at_screen(position)
+            if world_map != null and world_map.contains(clicked_tile.x, clicked_tile.y):
+                founding_tile_selected.emit(clicked_tile)
+            return
         var clicked_site := _founding_site_at(position)
         if not clicked_site.is_empty():
             founding_site_selected.emit(clicked_site)
@@ -589,6 +602,22 @@ func clear_founding_sites() -> void:
     founding_sites.clear()
     selected_founding_site_id = ""
     queue_redraw()
+
+func set_founding_tile_selection(enabled: bool, province_id: int = -1) -> void:
+    founding_tile_selection_enabled = enabled
+    founding_tile_selection_province_id = province_id if enabled else -1
+    if not enabled:
+        selected_founding_tile = Vector2i(-1, -1)
+    queue_redraw()
+
+func select_founding_tile(tile: Vector2i) -> void:
+    selected_founding_tile = tile
+    queue_redraw()
+
+func tile_at_screen(screen_point: Vector2) -> Vector2i:
+    if world_map == null:
+        return Vector2i(-1, -1)
+    return world_map.tile_at_world(_screen_to_world(screen_point))
 
 func set_settlement_markers(value: Array) -> void:
     settlement_markers.clear()
@@ -746,6 +775,7 @@ func _draw() -> void:
     _draw_map_body(numeric_range)
     _draw_command_paths()
     _draw_icons_and_labels()
+    _draw_founding_tile_selection()
     _draw_founding_sites()
     _draw_settlement_markers()
 
@@ -851,6 +881,9 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
 
+    if map_mode == "resources" and zoom >= 0.52:
+        _draw_world_resources(world_view)
+
     _draw_world_labels()
     _draw_regional_place_labels()
     if show_region_ids:
@@ -938,6 +971,31 @@ func _draw_world_selection(world_view: Rect2) -> void:
                 false,
                 1.5 / zoom
             )
+
+func _draw_world_resources(world_view: Rect2) -> void:
+    var tile_minimum := world_map.tile_at_world(world_view.position)
+    var tile_maximum := world_map.tile_at_world(world_view.end)
+    var glyphs := {"grain": "곡", "wood": "목", "iron": "철", "gold": "금"}
+    for row in range(maxi(0, tile_minimum.y), mini(world_map.height - 1, tile_maximum.y) + 1):
+        for column in range(maxi(0, tile_minimum.x), mini(world_map.width - 1, tile_maximum.x) + 1):
+            var resource: Dictionary = world_map.resource_at(column, row)
+            if resource.is_empty():
+                continue
+            var position := world_map.tile_center(column, row)
+            var radius := 2.8 / maxf(zoom, 0.01)
+            draw_circle(position, radius, Color(0.05, 0.07, 0.07, 0.82))
+            draw_arc(position, radius, 0.0, TAU, 12, resource.get("color", Color.WHITE), 1.2 / maxf(zoom, 0.01), true)
+            if zoom >= 1.15:
+                _queue_map_text(position, String(glyphs.get(String(resource.get("id", "")), "?")), 10, resource.get("color", Color.WHITE), Vector2.ZERO, true, 18)
+
+func _draw_founding_tile_selection() -> void:
+    if world_map == null or not founding_tile_selection_enabled:
+        return
+    if selected_founding_tile.x < 0 or not world_map.contains(selected_founding_tile.x, selected_founding_tile.y):
+        return
+    var rect := Rect2(Vector2(selected_founding_tile) * world_map.tile_size, Vector2.ONE * world_map.tile_size)
+    draw_rect(rect.grow(1.5 / maxf(zoom, 0.01)), Color(0.91, 0.72, 0.29, 0.22), true)
+    draw_rect(rect.grow(1.5 / maxf(zoom, 0.01)), Color("#e5bd66"), false, 2.4 / maxf(zoom, 0.01))
 
 
 func _draw_coast_highlight(world_view: Rect2) -> void:
@@ -1592,6 +1650,16 @@ func _vector_from_value(value: Variant) -> Vector2:
 
 
 # Tooltip --------------------------------------------------------------------
+
+func _tooltip_for_tile(tile: Vector2i, province_id: int) -> String:
+    var province_text := _tooltip_for(province_id)
+    if world_map == null or not world_map.contains(tile.x, tile.y):
+        return province_text
+    var terrain_text := world_map.terrain_name(world_map.terrain_id(tile.x, tile.y))
+    var resource: Dictionary = world_map.resource_at(tile.x, tile.y)
+    var resource_text := "자원 없음" if resource.is_empty() else "자원 %s" % String(resource.get("name", ""))
+    var tile_text := "타일 (%d, %d) · %s · %s" % [tile.x, tile.y, terrain_text, resource_text]
+    return tile_text if province_text.is_empty() else province_text + "\n" + tile_text
 
 func _tooltip_for(province_id: int) -> String:
     if province_id == -1 or not provinces.has(province_id):

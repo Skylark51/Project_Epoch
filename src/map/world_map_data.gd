@@ -10,6 +10,12 @@ const TERRAIN_COLORS := {
 	9: Color("#b79d5e"), 10: Color("#898e53"), 11: Color("#487760"),
 	12: Color("#3b7b99"), 13: Color("#2f6987")
 }
+const TILE_RESOURCES := {
+	"grain": {"name": "곡식", "category": "bonus", "color": Color("#d7bd68"), "yields": {"food": 2.0}},
+	"wood": {"name": "목재", "category": "bonus", "color": Color("#4f8a5b"), "yields": {"production": 1.5}},
+	"iron": {"name": "철", "category": "strategic", "color": Color("#8f9ca2"), "yields": {"production": 2.0}},
+	"gold": {"name": "금", "category": "luxury", "color": Color("#e1ad4d"), "yields": {"commerce": 3.0}},
+}
 
 var manifest: Dictionary = {}
 var projection := MapProjection.new()
@@ -144,6 +150,35 @@ func terrain_name(terrain_value: int) -> String:
 			return String(key)
 	return "unknown"
 
+func resource_at(column: int, row: int) -> Dictionary:
+	if not contains(column, row):
+		return {}
+	var terrain_value := terrain_id(column, row)
+	if terrain_value <= 3 or terrain_value == 13:
+		return {}
+	var roll := posmod((column * 73856093) ^ (row * 19349663) ^ (terrain_value * 83492791), 100)
+	var resource_id := "wood"
+	if terrain_value in [4, 5, 9, 10, 12]:
+		resource_id = "gold" if roll < 5 else "iron" if roll < 12 else "wood" if roll < 27 else "grain"
+	elif terrain_value in [6, 11]:
+		resource_id = "gold" if roll < 6 else "iron" if roll < 18 else "grain" if roll < 28 else "wood"
+	elif terrain_value in [7, 8]:
+		resource_id = "gold" if roll < 12 else "wood" if roll < 28 else "iron"
+	var definition: Dictionary = TILE_RESOURCES[resource_id]
+	return {
+		"id": resource_id,
+		"name": String(definition.get("name", resource_id)),
+		"category": String(definition.get("category", "bonus")),
+		"color": definition.get("color", Color.WHITE),
+		"yields": definition.get("yields", {}).duplicate(true),
+	}
+
+func resource_name(resource_id: String) -> String:
+	return String(TILE_RESOURCES.get(resource_id, {}).get("name", resource_id))
+
+func resource_color(resource_id: String) -> Color:
+	return TILE_RESOURCES.get(resource_id, {}).get("color", Color("#7d898c"))
+
 func visible_chunk_bounds(world_view: Rect2) -> Rect2i:
 	var chunk_world_size := float(chunk_size) * tile_size
 	var min_x := clampi(floori(world_view.position.x / chunk_world_size), 0, maxi(0, ceili(float(width) / chunk_size) - 1))
@@ -154,6 +189,13 @@ func visible_chunk_bounds(world_view: Rect2) -> Rect2i:
 
 func _cell_color(index: int, mode: String, countries: Dictionary, provinces: Dictionary, player_country_id: String, relations: Dictionary, wars: Array) -> Color:
 	var terrain_color: Color = TERRAIN_COLORS.get(int(terrain[index]), Color("#143548"))
+	if mode == "resources":
+		var column := index % width
+		var row := index / width
+		var resource := resource_at(column, row)
+		if resource.is_empty():
+			return terrain_color.darkened(0.18)
+		return terrain_color.lerp(resource.get("color", Color.WHITE), 0.68)
 	if mode == "terrain" or int(terrain[index]) <= 3 or int(terrain[index]) == 13:
 		return terrain_color
 	var source_index := int(province_layer[index])

@@ -47,6 +47,8 @@ func _run() -> void:
     check(app.ui.ruler_portrait.texture != null, "selecting a country reveals its ruler portrait")
     check(country_map.zoom >= 1.34, "selecting a country zooms the central map into its starting region")
     check("해무진" in app.ui.ruler_name.text, "selected ruler identity matches the country")
+    app.ui.ruler_name_input.text="무휼"; app._on_ruler_name_changed("무휼")
+    check(String(app._ruler_profile("goguryeo").name)=="무휼", "player can directly replace the selected country's ruler name")
     check(app.ui.country_start_button.text == "이 세력으로 개척 연대기 시작", "country screen presents a founding start rather than an established capital")
     check(app.ui.has("ruler_tween"), "ruler portrait entrance animation starts on selection")
     check(app._annal_entry("백제가 한성 권역에 들다.").begins_with("[서기 300년]"), "historical notifications use annal-style dating")
@@ -55,9 +57,12 @@ func _run() -> void:
     app._start_game()
     await process_frame
     await process_frame
+    check(app.ui.game_center.get_child(0) is PanelContainer, "redundant macro buttons are removed from above the map tiles")
+    var governance_component=app.get_node_or_null("GovernanceDashboard")
+    check(governance_component!=null and governance_component.launcher.get_parent()==app.ui.governance_slot, "governance and rebellion launcher lives in the management tab instead of covering the top bar")
     check(app.ui.first_decree_overlay.visible, "the ruler's first founding decree opens immediately after game start")
     check("아직 이 땅에 우리의 도시는 없다" in app.ui.first_decree_text.text and "첫 도시" in app.ui.first_decree_text.text, "opening explicitly begins before the first city is founded")
-    check("첫 개척령" in app.ui.first_decree_title.text, "opening decree is framed as a founding order")
+    check("무휼의 첫 개척령" in app.ui.first_decree_title.text, "opening decree uses the player-defined ruler name")
     check("첫 도시의 개척" in String(app.logs.back().message) and "도읍지를" not in String(app.logs.back().message), "opening annal does not assume an existing capital")
     var decree_bottom: float = app.ui.first_decree_panel.global_position.y + app.ui.first_decree_panel.size.y
     check(decree_bottom <= app.size.y+0.5, "first founding decree remains fully visible on a compact 16:9 screen")
@@ -67,7 +72,8 @@ func _run() -> void:
     check("첫 과업" in app.ui.action_status.text, "map UI carries the first-city founding objective")
     var founding_map := app._game_map() as StrategicMap
     check(founding_map.zoom >= 1.44, "game starts zoomed into the selected founding region")
-    check(app.founding_sites.size() == 3 and founding_map.founding_sites.size() == 3, "exactly three founding sites appear inside the region")
+    check(app.founding_sites.is_empty() and founding_map.founding_tile_selection_enabled, "the opening task enables direct tile selection instead of fixed border candidates")
+    check(founding_map.map_mode == "resources", "opening placement switches to the tile-resource view")
     founding_map.queue_redraw()
     await process_frame
     check(founding_map._last_drawn_texts.size() >= 3, "strong regional zoom reveals multiple real place names")
@@ -76,22 +82,26 @@ func _run() -> void:
         for right_index in range(left_index+1,founding_map._last_drawn_text_rects.size()):
             if founding_map._last_drawn_text_rects[left_index].intersects(founding_map._last_drawn_text_rects[right_index]): label_collision_free=false
     check(label_collision_free, "visible map place names do not overlap")
-    var candidate_ids: Dictionary = {}
-    var candidates_stay_in_region := true
-    for site in app.founding_sites:
-        candidate_ids[String(site.id)] = true
-        var site_screen: Vector2 = Vector2(site.position) * founding_map.zoom + founding_map.pan
-        if founding_map._province_at(site_screen) != app.founding_region_id: candidates_stay_in_region = false
-    check(candidate_ids.size() == 3 and candidates_stay_in_region, "founding sites are distinct and remain inside the selected region")
+    var chosen_tile:=Vector2i(-1,-1)
+    for index_value in founding_map.world_map.assigned_indices:
+        var tile_index:=int(index_value); var tile:=Vector2i(tile_index%founding_map.world_map.width,tile_index/founding_map.world_map.width)
+        if founding_map.world_map.province_id(tile.x,tile.y)!=app.founding_region_id: continue
+        if not bool(app.tile_territory.can_found_initial_city(founding_map.world_map,tile,app.selected_country).get("ok",false)): continue
+        var interior:=true
+        for offset in [Vector2i(-1,0),Vector2i(1,0),Vector2i(0,-1),Vector2i(0,1)]:
+            if founding_map.world_map.province_id(tile.x+offset.x,tile.y+offset.y)!=app.founding_region_id: interior=false
+        if interior: chosen_tile=tile; break
+    check(chosen_tile.x>=0, "an interior settleable tile exists inside the starting region")
+    var chosen_resource:Dictionary=founding_map.world_map.resource_at(chosen_tile.x,chosen_tile.y)
+    check(String(chosen_resource.get("id","")) in ["grain","wood","iron","gold"], "every selected land tile exposes a Civilization-style resource")
+    app._founding_tile_pick(chosen_tile)
+    check(app.founding_sites.size()==1 and Vector2i(app.founding_sites[0].tile)==chosen_tile, "clicking any valid interior tile creates the selected founding site")
     var first_site: Dictionary = app.founding_sites[0]
-    var first_site_screen: Vector2 = Vector2(first_site.position) * founding_map.zoom + founding_map.pan
-    check(founding_map._founding_site_at(first_site_screen) == String(first_site.id), "founding site markers are selectable on the map")
-    app._founding_site_pick(String(first_site.id))
-    check(app.founding_dialog != null and app.founding_dialog.visible, "clicking a founding marker opens its tradeoff confirmation")
+    check(app.founding_dialog != null and app.founding_dialog.visible, "clicking a chosen tile opens its terrain and resource confirmation")
     app._confirm_founding_site(first_site)
     if app.founding_dialog != null: app.founding_dialog.hide()
     await process_frame
-    check(app.founding_site_confirmed and app.selected_founding_site_id == String(first_site.id), "one of the three founding sites can be confirmed")
+    check(app.founding_site_confirmed and app.selected_founding_site_id == String(first_site.id), "the directly clicked tile can be confirmed")
     check(app.city_name_dialog != null and app.city_name_dialog.visible, "confirming a site immediately opens direct city naming")
     check(app.city_name_input.text == "졸본", "city naming starts with a historical recommendation")
     app.city_name_input.text="새국내"
@@ -101,9 +111,9 @@ func _run() -> void:
     check(app.tile_city_id != "" and app.tile_territory.has_capital("goguryeo"), "city naming founds one real capital on the selected map tile")
     check(app.tile_territory.managed_tiles(app.tile_city_id).size() >= 4, "new capital immediately owns its local tile management area")
     check(app.first_construction_dialog != null and app.first_construction_dialog.visible, "city naming proceeds directly to the first construction choice")
-    check("우물과 저장고" in app.ui.construction_recommendation.text, "founding terrain produces a highlighted construction recommendation")
+    check(String(app.FIRST_CONSTRUCTIONS[app._recommended_first_construction()].name) in app.ui.construction_recommendation.text, "founding resource produces a highlighted construction recommendation")
     check(app.ui.first_construction_buttons.size() == 3, "all three first constructions remain directly selectable")
-    check(app.settlement_preview.variant == "well_storage", "recommended construction is previewed visually")
+    check(app.settlement_preview.variant == app._recommended_first_construction(), "recommended construction is previewed visually")
     check(app._game_map().settlement_markers.size() == 1 and String(app._game_map().settlement_markers[0].appearance) == "camp", "named city first appears as a temporary pioneer camp")
     var appearances: Dictionary = {}
     for construction in app.FIRST_CONSTRUCTIONS.values(): appearances[String(construction.appearance)] = true
@@ -181,17 +191,19 @@ func _run() -> void:
     check("건설 50, 비축 30, 경계 20" in String(app.logs.back().message), "city detail adjustment enters the annal log")
     var saved_campaign:Dictionary=app.gateway.campaign_save_data()
     check(String(saved_campaign.get("founded_city_name",""))=="새국내" and int(saved_campaign.get("first_construction_stage",0))==3, "autosave metadata contains the founded city and completed construction")
+    check(String(saved_campaign.get("custom_ruler_names",{}).get("goguryeo",""))=="무휼", "autosave metadata preserves the player-defined ruler name")
     check(String(saved_campaign.get("settler_outcome",""))=="selective" and String(saved_campaign.get("first_priority_project_id",""))=="irrigation", "autosave metadata contains settler and operating-project decisions")
     check(int(saved_campaign.get("city_management",{}).get("labor",0))==50 and saved_campaign.get("logs",[]).size()>0, "autosave metadata contains administration allocation and annal history")
     check(String(saved_campaign.get("tile_city_id",""))!="" and saved_campaign.get("tile_territory",{}).get("settlements",{}).size()==1, "autosave persists the authoritative city and tile-management snapshot")
     var saved_log_count:int=app.logs.size()
-    app.founded_city_name=""; app.first_construction_id=""; app.first_construction_stage=0; app.settler_outcome=""; app.first_priority_project_id=""; app.city_households=0
+    app.founded_city_name=""; app.first_construction_id=""; app.first_construction_stage=0; app.settler_outcome=""; app.first_priority_project_id=""; app.city_households=0; app.custom_ruler_names.clear()
     app.city_food_reserve=0; app.city_food_capacity=1; app.city_management={"labor":100,"food":0,"guard":0}; app.logs.clear(); app._game_map().set_settlement_markers([])
     app.tile_territory.reset(); app.tile_city_id=""
     app._load_game()
     await process_frame
     await process_frame
     check(app.founded_city_name=="새국내" and app.first_construction_id=="palisade" and app.first_construction_stage==3, "load-game restores the founded city and construction state")
+    check(String(app._ruler_profile("goguryeo").name)=="무휼", "load-game restores the player-defined ruler name")
     check(app.settler_outcome=="selective" and app.first_priority_project_id=="irrigation" and app.city_households==18, "load-game restores settler and operating-project state")
     check(int(app.city_management.labor)==50 and app.city_food_capacity==120 and app.city_food_reserve==98, "load-game restores city administration resources and allocation")
     check(app.tile_city_id!="" and app.tile_territory.households(app.tile_city_id).size()==18, "load-game restores the city core and its household pool")
@@ -202,6 +214,23 @@ func _run() -> void:
     else:
         check(false, "restored map marker preserves city identity and population")
     check(not app.ui.first_decree_overlay.visible, "completed campaign load does not replay the opening decree")
+    app._queue_settler_production()
+    check(app.settler_orders.size()==1 and int(app.settler_orders[0].remaining_turns)==3, "capital can queue a settler with explicit food, wood, and turn costs")
+    app._advance_settler_production(); app._advance_settler_production(); app._advance_settler_production()
+    check(app.settler_units==1 and app.settler_orders.is_empty(), "settler production completes after three turns")
+    app._begin_settler_founding()
+    check(app.settler_founding_active and app._game_map().founding_tile_selection_enabled, "completed settler enters direct map-tile destination mode")
+    var second_city_tile:=Vector2i(-1,-1)
+    for index_value in app._game_map().world_map.assigned_indices:
+        var tile_index:=int(index_value); var tile:=Vector2i(tile_index%app._game_map().world_map.width,tile_index/app._game_map().world_map.width)
+        if bool(app.tile_territory.can_found_city(app._game_map().world_map,tile,app.selected_country).get("ok",false)):
+            second_city_tile=tile; break
+    check(second_city_tile.x>=0, "a valid destination exists outside the first city's exclusion radius")
+    app._pick_settler_destination(second_city_tile)
+    check(app.additional_city_dialog!=null and app.additional_city_dialog.visible, "settler destination click opens editable city naming")
+    app.additional_city_name_input.text="두번째도시"; app._confirm_additional_city(); await process_frame
+    check(app.settler_units==0 and app.tile_territory.snapshot().get("settlements",{}).size()==2, "founding a second city consumes exactly one produced settler")
+    check(app._game_map().settlement_markers.size()==2, "additional city receives its own central-map settlement marker")
     for resolution in [Vector2i(1280,720),Vector2i(1920,1080)]:
         root.size=resolution
         await process_frame

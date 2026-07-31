@@ -29,6 +29,14 @@ func _run() -> void:
 	var seoul_screen := seoul_world * map.zoom + map.pan
 	_expect(map.call("_province_at", seoul_screen) != -1, "서울 실제 좌표에서 기존 전략 프로빈스를 선택할 수 있어야 한다.")
 	_expect(String(map.call("_city_at", seoul_screen)) == "seoul", "서울 도시 마커가 실제 좌표에서 클릭되어야 한다.")
+	var resource_ids:Dictionary={}
+	for index_value in map.world_map.assigned_indices:
+		var tile_index:=int(index_value)
+		var resource:Dictionary=map.world_map.resource_at(tile_index%map.world_map.width,tile_index/map.world_map.width)
+		if not resource.is_empty(): resource_ids[String(resource.get("id",""))]=true
+	_expect(resource_ids.has("grain") and resource_ids.has("wood") and resource_ids.has("iron") and resource_ids.has("gold"), "육지 타일에 곡식·목재·철·금이 결정론적으로 분포해야 한다.")
+	map.set_mode("resources"); await process_frame
+	_expect(map.map_mode=="resources", "타일 자원 전용 지도 모드를 사용할 수 있어야 한다.")
 	var islands := [
 		["제주", 126.53, 33.38], ["울릉도", 130.90, 37.50], ["독도", 131.87, 37.24],
 		["쓰시마", 129.30, 34.40], ["하이난", 109.75, 19.20], ["타이완", 121.00, 23.70],

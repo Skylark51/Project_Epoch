@@ -358,7 +358,7 @@ func _refresh_selected_detail(center: Vector2i) -> void:
 	)
 	detail_label.text = (
 		"[color=#dec783][font_size=15](%d, %d) · %s[/font_size][/color]\n"
-		+ "[color=#9eaaad]%s[/color]\n\n"
+		+ "[color=#9eaaad]%s · %s[/color]\n\n"
 		+ "잠재 생산  %s\n"
 		+ "현재 생산  %s\n\n"
 		+ "시설  %s"
@@ -367,6 +367,7 @@ func _refresh_selected_detail(center: Vector2i) -> void:
 		selected_tile.y,
 		world_map.terrain_name(int(tile_record.get("terrain_id", 0))),
 		work_text,
+		_resource_text(tile_record),
 		_yield_text(yield_detail.get("potential_yields", {})),
 		_yield_text(yield_detail.get("active_yields", {})),
 		", ".join(facility_lines) if not facility_lines.is_empty() else "없음",
@@ -441,13 +442,21 @@ func _tile_tooltip(tile: Vector2i, tile_record: Dictionary) -> String:
 				int(facilities[facility_id_value]),
 			]
 		)
-	return "(%d, %d) %s\n%s\n시설: %s" % [
+	return "(%d, %d) %s\n%s · %s\n시설: %s" % [
 		tile.x,
 		tile.y,
 		world_map.terrain_name(int(tile_record.get("terrain_id", 0))),
 		"작업 중" if bool(tile_record.get("worked", false)) else "유휴",
+		_resource_text(tile_record),
 		", ".join(facility_names) if not facility_names.is_empty() else "없음",
 	]
+
+func _resource_text(tile_record: Dictionary) -> String:
+	var names: Array[String] = []
+	for resource_value in tile_record.get("special_resources", []):
+		if resource_value is Dictionary:
+			names.append(String(resource_value.get("name", resource_value.get("id", ""))))
+	return "자원: %s" % (", ".join(names) if not names.is_empty() else "없음")
 
 
 func _yield_text(yields: Dictionary) -> String:

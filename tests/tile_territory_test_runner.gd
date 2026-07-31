@@ -65,6 +65,12 @@ func _run() -> void:
 			== String(first_city.get("id", "")),
 			"초기 영향권의 모든 타일은 한 도시에만 귀속된다."
 		)
+		if int(tile_record.get("terrain_id",0))>3 and int(tile_record.get("terrain_id",0))!=13:
+			_expect(
+				tile_record.get("special_resources", []).size() == 1
+				and String(tile_record.get("special_resources", [])[0].get("id", "")) in ["grain", "wood", "iron", "gold"],
+				"도시가 확보한 각 육지 타일은 지도 기반 자원 하나를 자동 계승한다."
+			)
 	var base_yield: Dictionary = manager.tile_yield(world_map, first_tile)
 	_expect(
 		bool(base_yield.get("worked", false))

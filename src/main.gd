@@ -28,12 +28,16 @@ const MAP_MODES := [
 	["manpower", "인력"],
 	["stability", "안정"],
 	["revolt", "반란"],
+	["resources", "자원"],
 	["terrain", "지형"],
 	["fort", "요새"]
 ]
 
 const LOG_LIMIT := 120
-const CAMPAIGN_SAVE_SCHEMA_VERSION := 2
+const CAMPAIGN_SAVE_SCHEMA_VERSION := 4
+const SETTLER_PRODUCTION_TURNS := 3
+const SETTLER_FOOD_COST := 25
+const SETTLER_WOOD_COST := 15.0
 const FIRST_CONSTRUCTION_TILE_FACILITIES := {
 	"well_storage": "market",
 	"farmland": "farmland",
@@ -99,6 +103,7 @@ var tile_city_id := ""
 var state := ScreenState.START
 
 var selected_country := "goguryeo"
+var custom_ruler_names: Dictionary = {}
 var selected_province := -1
 var selected_provinces: Array[int] = []
 
@@ -132,6 +137,12 @@ var tile_city_panel
 var city_management := {"labor":40,"food":35,"guard":25}
 var settler_dialog: Window
 var settler_outcome := ""
+var settler_units := 0
+var settler_orders: Array[Dictionary] = []
+var settler_founding_active := false
+var settler_target_tile := Vector2i(-1, -1)
+var additional_city_dialog: Window
+var additional_city_name_input: LineEdit
 var city_households := 0
 var city_population_profile := {"farmers":0,"artisans":0,"guards":0}
 var city_food_reserve := 100
@@ -218,7 +229,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 	match event.keycode:
 		KEY_ESCAPE:
-			if ui.has("first_decree_overlay") and ui.first_decree_overlay.visible:
+			if settler_founding_active:
+				_cancel_settler_founding()
+			elif ui.has("first_decree_overlay") and ui.first_decree_overlay.visible:
 				_close_first_decree()
 			elif pending_kind.is_empty():
 				_show(ScreenState.START)
@@ -625,7 +638,8 @@ func _build_country() -> Control:
 	var info:=VBoxContainer.new(); info.size_flags_horizontal=Control.SIZE_EXPAND_FILL; info.add_theme_constant_override("separation",5); info_scroll.add_child(info)
 	var portrait:=TextureRect.new(); portrait.name="RulerPortrait"; portrait.custom_minimum_size=Vector2(0,194); portrait.size_flags_horizontal=Control.SIZE_EXPAND_FILL; portrait.expand_mode=TextureRect.EXPAND_IGNORE_SIZE; portrait.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_CENTERED; ui.ruler_portrait=portrait; ui.country_portrait=portrait; info.add_child(portrait)
 	var fallback:=_label("초상 기록 없음",18,Color("#879399")); fallback.custom_minimum_size.y=194; fallback.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; fallback.vertical_alignment=VERTICAL_ALIGNMENT_CENTER; fallback.hide(); ui.ruler_fallback=fallback; info.add_child(fallback)
-	var ruler_name:=_label("",21,Color("#e3cd8d")); ruler_name.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui.ruler_name=ruler_name; info.add_child(ruler_name)
+	info.add_child(_label("군주 이름 · 직접 입력",11,Color("#9eaaad"),HORIZONTAL_ALIGNMENT_CENTER))
+	var ruler_name:=LineEdit.new(); ruler_name.name="RulerNameInput"; ruler_name.placeholder_text="군주 이름 입력"; ruler_name.max_length=16; ruler_name.alignment=HORIZONTAL_ALIGNMENT_CENTER; ruler_name.add_theme_font_size_override("font_size",19); ruler_name.text_changed.connect(_on_ruler_name_changed); ui.ruler_name=ruler_name; ui.ruler_name_input=ruler_name; info.add_child(ruler_name)
 	var ruler_title:=_label("",11,Color("#a9b4b5")); ruler_title.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ruler_title.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART; ui.ruler_title=ruler_title; info.add_child(ruler_title)
 	var detail:=RichTextLabel.new(); detail.bbcode_enabled=true; detail.fit_content=false; detail.custom_minimum_size.y=72; ui.country_detail=detail; info.add_child(detail)
 	var spectate:=CheckBox.new(); spectate.text="관전 모드"; info.add_child(spectate)
@@ -653,11 +667,11 @@ func _build_game() -> Control:
 	split.add_child(center_right)
 
 	var center := VBoxContainer.new()
+	center.name = "GameMapColumn"
+	ui.game_center = center
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.add_theme_constant_override("separation", 6)
 	center_right.add_child(center)
-	center.add_child(_macro_toolbar())
-
 	var map_panel := PanelContainer.new()
 	map_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	map_panel.add_theme_stylebox_override(
@@ -716,12 +730,15 @@ func _connect_game_map_signals(game_map: StrategicMap) -> void:
 	game_map.province_dropped.connect(_quick_drag_move)
 	game_map.command_target_selected.connect(_map_target)
 	game_map.founding_site_selected.connect(_founding_site_pick)
+	game_map.founding_tile_selected.connect(_founding_tile_pick)
 	game_map.settlement_double_clicked.connect(_open_city_detail)
 	game_map.tooltip_changed.connect(_map_tooltip)
 
 
 func _top_bar() -> Control:
 	var panel := PanelContainer.new()
+	panel.name = "GameTopBar"
+	ui.top_bar = panel
 	panel.custom_minimum_size.y = 62
 	panel.add_theme_stylebox_override(
 		"panel",
@@ -855,6 +872,11 @@ func _left_panel() -> Control:
 			_smart_recommend.bind("economy")
 		)
 	)
+	var governance_slot:=VBoxContainer.new()
+	governance_slot.name="GovernanceSlot"
+	governance_slot.add_theme_constant_override("separation",4)
+	ui.governance_slot=governance_slot
+	management.add_child(governance_slot)
 	tabs.add_child(management)
 	return tabs
 
@@ -1250,7 +1272,15 @@ func _country_map_pick(province_id:int) -> void:
 	var owner:=String(gateway.province(province_id).get("owner","")); if owner!="": _select_country(owner)
 
 func _ruler_profile(country_id:String) -> Dictionary:
-	return RULER_PROFILES.get(country_id,{"name":"기록되지 않은 군주","title":"계보 미상","age":0,"administration":0,"military":0})
+	var profile:Dictionary=RULER_PROFILES.get(country_id,{"name":"기록되지 않은 군주","title":"계보 미상","age":0,"administration":0,"military":0}).duplicate(true)
+	var custom_name:=String(custom_ruler_names.get(country_id,"")).strip_edges()
+	if custom_name!="": profile["name"]=custom_name
+	return profile
+
+func _on_ruler_name_changed(value:String) -> void:
+	var ruler_name:=value.strip_edges()
+	if ruler_name=="": custom_ruler_names.erase(selected_country)
+	else: custom_ruler_names[selected_country]=ruler_name
 
 func _refresh_ruler(country_id:String,animate:bool=false) -> void:
 	if not ui.has("ruler_portrait"): return
@@ -1284,10 +1314,12 @@ func _annal_entry(statement:String) -> String:
 func _campaign_save_data() -> Dictionary:
 	return {
 		"schema_version":CAMPAIGN_SAVE_SCHEMA_VERSION,
+		"custom_ruler_names":custom_ruler_names.duplicate(true),
 		"first_decree_reviewed":first_decree_reviewed,
 		"founding_region_id":founding_region_id,
 		"founding_sites_revealed":not founding_sites.is_empty(),
 		"selected_founding_site_id":selected_founding_site_id,
+		"selected_founding_tile":[_selected_founding_tile().x,_selected_founding_tile().y],
 		"founding_site_confirmed":founding_site_confirmed,
 		"founded_city_name":founded_city_name,
 		"tile_city_id":tile_city_id,
@@ -1295,6 +1327,8 @@ func _campaign_save_data() -> Dictionary:
 		"first_construction_id":first_construction_id,
 		"first_construction_stage":first_construction_stage,
 		"settler_outcome":settler_outcome,
+		"settler_units":settler_units,
+		"settler_orders":settler_orders.duplicate(true),
 		"city_households":city_households,
 		"city_population_profile":city_population_profile.duplicate(true),
 		"city_food_reserve":city_food_reserve,
@@ -1317,6 +1351,12 @@ func _restore_campaign_state(data:Dictionary) -> bool:
 	if saved_version>CAMPAIGN_SAVE_SCHEMA_VERSION:
 		_notify("개척 내정 세이브 버전이 현재 게임보다 새롭습니다.","warning")
 		return false
+	custom_ruler_names.clear()
+	var saved_ruler_names=data.get("custom_ruler_names",{})
+	if saved_ruler_names is Dictionary:
+		for country_id_value in saved_ruler_names.keys():
+			var ruler_name:=String(saved_ruler_names[country_id_value]).strip_edges()
+			if ruler_name!="": custom_ruler_names[String(country_id_value)]=ruler_name.left(16)
 	first_decree_reviewed=bool(data.get("first_decree_reviewed",false))
 	founding_region_id=int(data.get("founding_region_id",gateway.country(selected_country).get("capital_province",-1)))
 	selected_founding_site_id=String(data.get("selected_founding_site_id",""))
@@ -1327,6 +1367,15 @@ func _restore_campaign_state(data:Dictionary) -> bool:
 	first_construction_stage=clampi(int(data.get("first_construction_stage",0)),0,3)
 	settler_outcome=String(data.get("settler_outcome",""))
 	if settler_outcome!="" and not SETTLER_CHOICES.has(settler_outcome): settler_outcome=""
+	settler_units=maxi(0,int(data.get("settler_units",0)))
+	settler_orders.clear()
+	var saved_settler_orders=data.get("settler_orders",[])
+	if saved_settler_orders is Array:
+		for order_value in saved_settler_orders:
+			if order_value is Dictionary:
+				var order:Dictionary=order_value.duplicate(true)
+				order["remaining_turns"]=clampi(int(order.get("remaining_turns",SETTLER_PRODUCTION_TURNS)),1,SETTLER_PRODUCTION_TURNS)
+				settler_orders.append(order)
 	city_households=maxi(0,int(data.get("city_households",0)))
 	var saved_population=data.get("city_population_profile",{})
 	city_population_profile=saved_population.duplicate(true) if saved_population is Dictionary else {"farmers":0,"artisans":0,"guards":0}
@@ -1352,7 +1401,14 @@ func _restore_campaign_state(data:Dictionary) -> bool:
 			if entry is Dictionary: logs.append(entry.duplicate(true))
 	while logs.size()>LOG_LIMIT: logs.pop_front()
 	_refresh_logs("전체")
-	founding_sites=_game_map().founding_site_candidates(founding_region_id)
+	founding_sites.clear()
+	var saved_founding_tile=data.get("selected_founding_tile",[])
+	if saved_founding_tile is Array and saved_founding_tile.size()>=2:
+		var founding_tile:=Vector2i(int(saved_founding_tile[0]),int(saved_founding_tile[1]))
+		var restored_site:=_founding_site_for_tile(founding_tile)
+		if not restored_site.is_empty(): founding_sites.append(restored_site)
+	elif saved_version<3:
+		founding_sites=_game_map().founding_site_candidates(founding_region_id)
 	if _founding_site(selected_founding_site_id).is_empty():
 		selected_founding_site_id=""
 		founding_site_confirmed=false
@@ -1363,14 +1419,17 @@ func _restore_campaign_state(data:Dictionary) -> bool:
 	_game_map().set_selected_provinces(selected_provinces)
 	_restore_tile_territory(data)
 	if founded_city_name!="":
+		_game_map().set_founding_tile_selection(false)
 		_game_map().clear_founding_sites()
 		var appearance:="camp"
 		if first_construction_id!="": appearance=String(FIRST_CONSTRUCTIONS[first_construction_id].appearance)
 		_update_settlement_marker(appearance)
 	elif first_decree_reviewed and not founding_site_confirmed:
 		_game_map().set_founding_sites(founding_sites)
+		_game_map().set_founding_tile_selection(true,founding_region_id)
 		if selected_founding_site_id!="": _game_map().select_founding_site(selected_founding_site_id)
 	else:
+		_game_map().set_founding_tile_selection(false)
 		_game_map().clear_founding_sites()
 	return true
 
@@ -1382,7 +1441,8 @@ func _resume_campaign_after_load() -> void:
 		elif founding_site_confirmed:
 			_open_city_naming()
 		else:
-			if ui.has("action_status"): ui.action_status.text="첫 과업 · 지도에 표시된 A·B·C 후보지 중 첫 도시의 터를 고르십시오."
+			_game_map().set_founding_tile_selection(true,founding_region_id)
+			if ui.has("action_status"): ui.action_status.text="첫 과업 · 출발 권역 안의 원하는 육지 타일을 직접 클릭하십시오."
 		return
 	if first_construction_id=="":
 		if ui.has("action_status"): ui.action_status.text="첫 도시 · %s · 첫 사업을 정하십시오." % founded_city_name
@@ -1408,11 +1468,11 @@ func _start_game() -> void:
 	if not gateway.select_player_country(selected_country): _notify("세력을 선택하지 못했습니다.","error"); return
 	var country:=gateway.country(selected_country)
 	tile_territory.reset(); tile_city_id=""; tile_city_panel=null
-	first_decree_reviewed=false; founding_region_id=int(country.get("capital_province",-1)); founding_sites.clear(); selected_founding_site_id=""; founding_site_confirmed=false; founded_city_name=""; first_construction_id=""; first_construction_stage=0; settler_outcome=""; city_households=0; city_population_profile={"farmers":0,"artisans":0,"guards":0}; city_food_reserve=100; city_food_capacity=100; city_reputation=50; city_production=0; city_security=0; first_priority_project_id=""; city_management={"labor":40,"food":35,"guard":25}
+	first_decree_reviewed=false; founding_region_id=int(country.get("capital_province",-1)); founding_sites.clear(); selected_founding_site_id=""; founding_site_confirmed=false; founded_city_name=""; first_construction_id=""; first_construction_stage=0; settler_outcome=""; settler_units=0; settler_orders.clear(); settler_founding_active=false; settler_target_tile=Vector2i(-1,-1); city_households=0; city_population_profile={"farmers":0,"artisans":0,"guards":0}; city_food_reserve=100; city_food_capacity=100; city_reputation=50; city_production=0; city_security=0; first_priority_project_id=""; city_management={"labor":40,"food":35,"guard":25}
 	var starting_region_name:=_province_name(founding_region_id)
 	var entry:=_annal_entry("%s(플레이어)가 %s 권역에 들어 첫 도시의 개척을 시작하다." % [_country_name(selected_country),starting_region_name])
 	_add_log("중요",entry,"important"); _show(ScreenState.GAME)
-	selected_province=founding_region_id; selected_provinces.clear(); _game_map().clear_founding_sites(); _game_map().set_settlement_markers([])
+	selected_province=founding_region_id; selected_provinces.clear(); _game_map().set_founding_tile_selection(false); _game_map().clear_founding_sites(); _game_map().set_settlement_markers([])
 	if founding_region_id!=-1: selected_provinces.append(founding_region_id); _game_map().selected_province_id=founding_region_id
 	_autosave_campaign_progress()
 	call_deferred("_focus_starting_region")
@@ -1445,12 +1505,48 @@ func _close_first_decree() -> void:
 	_prepare_founding_sites()
 
 func _prepare_founding_sites() -> void:
-	founding_sites=_game_map().founding_site_candidates(founding_region_id)
+	founding_sites.clear()
 	_game_map().set_founding_sites(founding_sites)
+	_game_map().set_founding_tile_selection(true,founding_region_id)
+	_set_map_mode("resources")
 	_focus_starting_region()
-	if ui.has("action_status"): ui.action_status.text="첫 과업 · 지도에 표시된 A·B·C 후보지 중 첫 도시의 터를 고르십시오."
-	_notify("%s 권역에 도시 후보지 3곳이 표시되었습니다." % _province_name(founding_region_id),"info")
+	if ui.has("action_status"): ui.action_status.text="첫 과업 · %s 권역 안의 원하는 육지 타일을 직접 클릭하십시오." % _province_name(founding_region_id)
+	_notify("자원 지도를 살펴보고 %s 권역 안에서 원하는 타일을 고르십시오." % _province_name(founding_region_id),"info")
 	_autosave_campaign_progress()
+
+func _founding_site_for_tile(tile:Vector2i) -> Dictionary:
+	var game_map:=_game_map()
+	if game_map.world_map==null or not game_map.world_map.contains(tile.x,tile.y): return {}
+	var resource:Dictionary=game_map.world_map.resource_at(tile.x,tile.y)
+	var resource_name:=String(resource.get("name","자원 없음"))
+	var terrain_name:=game_map.world_map.terrain_name(game_map.world_map.terrain_id(tile.x,tile.y))
+	var site_name:="%s이 있는 터" % resource_name if not resource.is_empty() else "살필 터"
+	var strengths:={"grain":"풍부한 식량으로 초기 성장이 빠릅니다.","wood":"목재 조달과 건설에 유리합니다.","iron":"도구와 무기 생산 기반을 확보합니다.","gold":"교역과 재정 수입을 크게 늘릴 수 있습니다."}
+	var burdens:={"grain":"방어와 광물 생산은 따로 보완해야 합니다.","wood":"개간에 시간이 들고 식량 기반이 약합니다.","iron":"초기 경작지가 부족할 수 있습니다.","gold":"사치 자원을 지키기 위한 경계가 필요합니다."}
+	var resource_id:=String(resource.get("id",""))
+	return {"id":"tile_%d_%d" % [tile.x,tile.y],"letter":"선택","name":site_name,"summary":String(strengths.get(resource_id,"지형을 살펴 직접 고른 터입니다.")),"tradeoff":String(burdens.get(resource_id,"주변 기반 시설을 직접 갖추어야 합니다.")),"position":game_map.world_map.tile_center(tile.x,tile.y),"tile":tile,"terrain":terrain_name,"resource":resource}
+
+func _founding_tile_pick(tile:Vector2i) -> void:
+	if settler_founding_active:
+		_pick_settler_destination(tile)
+		return
+	if founding_site_confirmed or not first_decree_reviewed: return
+	var game_map:=_game_map()
+	if game_map.world_map==null: return
+	if game_map.world_map.province_id(tile.x,tile.y)!=founding_region_id:
+		_notify("첫 도시는 %s 권역 안에서 선택해야 합니다." % _province_name(founding_region_id),"warning")
+		return
+	var validation:Dictionary=tile_territory.can_found_initial_city(game_map.world_map,tile,selected_country)
+	if not bool(validation.get("ok",false)):
+		_notify(String(validation.get("reason","이 타일에는 도시를 세울 수 없습니다.")),"warning")
+		return
+	var site:=_founding_site_for_tile(tile)
+	founding_sites=[site]
+	selected_founding_site_id=String(site.id)
+	game_map.set_founding_sites(founding_sites)
+	game_map.select_founding_tile(tile)
+	game_map.select_founding_site(selected_founding_site_id)
+	_founding_site_pick(selected_founding_site_id)
 
 func _founding_site(site_id:String) -> Dictionary:
 	for site in founding_sites:
@@ -1517,6 +1613,7 @@ func _restore_tile_territory(data:Dictionary) -> void:
 	var saved_state=data.get("tile_territory",{})
 	if saved_state is Dictionary and not saved_state.is_empty():
 		tile_territory.load_snapshot(saved_state)
+		_ensure_generated_tile_resources()
 		if tile_city_id=="":
 			for city_value in tile_territory.snapshot().get("settlements",{}).values():
 				if city_value is Dictionary and bool(city_value.get("is_capital",false)) and String(city_value.get("owner_id",""))==selected_country:
@@ -1538,14 +1635,28 @@ func _restore_tile_territory(data:Dictionary) -> void:
 		tile_territory.add_households(tile_city_id,city_households,4,"settler")
 	_sync_tile_city_construction()
 
+func _ensure_generated_tile_resources() -> void:
+	var world_map=_game_map().world_map
+	if world_map==null or not world_map.has_method("resource_at"): return
+	for city_value in tile_territory.snapshot().get("settlements",{}).values():
+		if city_value is not Dictionary: continue
+		var settlement_id:=String(city_value.get("id",""))
+		for tile_record in tile_territory.managed_tiles(settlement_id):
+			if not tile_record.get("special_resources",[]).is_empty(): continue
+			var tile:=Vector2i(int(tile_record.get("column",-1)),int(tile_record.get("row",-1)))
+			var resource:Dictionary=world_map.resource_at(tile.x,tile.y)
+			var resources:Array=[] if resource.is_empty() else [resource]
+			tile_territory.configure_tile_yield_sources(world_map,settlement_id,tile,resources,tile_record.get("facility_levels",{}))
+
 func _founding_site_pick(site_id:String) -> void:
 	if founding_site_confirmed: return
 	var site:=_founding_site(site_id)
 	if site.is_empty(): return
 	selected_founding_site_id=site_id; _game_map().select_founding_site(site_id)
 	if is_instance_valid(founding_dialog): founding_dialog.queue_free()
-	founding_dialog=ConfirmationDialog.new(); founding_dialog.title="첫 도시 후보지 · %s" % String(site.get("name","후보지")); founding_dialog.ok_button_text="이곳을 도시 터로 정한다"; founding_dialog.cancel_button_text="다른 곳을 살핀다"
-	founding_dialog.dialog_text="%s 후보 · %s\n\n강점  %s\n부담  %s\n\n이곳을 첫 도시의 터로 정하시겠습니까?" % [String(site.get("letter","?")),String(site.get("name","후보지")),String(site.get("summary","")),String(site.get("tradeoff",""))]
+	founding_dialog=ConfirmationDialog.new(); founding_dialog.title="첫 도시 타일 · %s" % String(site.get("name","선택한 터")); founding_dialog.ok_button_text="이 타일에 도시를 세운다"; founding_dialog.cancel_button_text="다른 타일을 고른다"
+	var picked_tile:Vector2i=site.get("tile",Vector2i(-1,-1))
+	founding_dialog.dialog_text="타일 (%d, %d) · %s · %s\n\n강점  %s\n부담  %s\n\n이곳을 첫 도시의 터로 정하시겠습니까?" % [picked_tile.x,picked_tile.y,String(site.get("terrain","")),String(site.get("resource",{}).get("name","자원 없음")),String(site.get("summary","")),String(site.get("tradeoff",""))]
 	founding_dialog.confirmed.connect(func(): _confirm_founding_site(site); founding_dialog.queue_free())
 	founding_dialog.canceled.connect(func(): founding_dialog.queue_free())
 	add_child(founding_dialog); founding_dialog.popup_centered(Vector2i(520,300))
@@ -1553,6 +1664,7 @@ func _founding_site_pick(site_id:String) -> void:
 func _confirm_founding_site(site:Dictionary) -> void:
 	if site.is_empty() or founding_site_confirmed: return
 	selected_founding_site_id=String(site.get("id","")); founding_site_confirmed=true
+	_game_map().set_founding_tile_selection(false)
 	_game_map().select_founding_site(selected_founding_site_id)
 	var site_name:=String(site.get("name","후보지")); var region_name:=_province_name(founding_region_id)
 	_add_log("중요",_annal_entry("%s(플레이어)가 %s 권역의 %s을 첫 도시의 터로 정하다." % [_country_name(selected_country),region_name,site_name]),"important")
@@ -1595,7 +1707,8 @@ func _confirm_city_name(submitted_name:String="") -> void:
 	call_deferred("_open_first_construction")
 
 func _recommended_first_construction() -> String:
-	return {"waterside":"well_storage","farmland":"farmland","highland":"palisade"}.get(selected_founding_site_id,"well_storage")
+	var resource_id:=String(_founding_site(selected_founding_site_id).get("resource",{}).get("id",""))
+	return {"grain":"farmland","wood":"palisade","iron":"palisade","gold":"well_storage"}.get(resource_id,"well_storage")
 
 func _open_first_construction() -> void:
 	if is_instance_valid(first_construction_dialog): first_construction_dialog.queue_free()
@@ -1656,10 +1769,22 @@ func _construction_stage_text() -> String:
 	return {0:"사업 미정",1:"1/3 · 측량과 자재 집결",2:"2/3 · 기초와 골조 건설",3:"3/3 · 완공"}.get(first_construction_stage,"사업 미정")
 
 func _update_settlement_marker(appearance:String) -> void:
-	var site:=_founding_site(selected_founding_site_id)
-	if site.is_empty(): return
-	var marker_stage:=3 if appearance=="camp" else maxi(1,first_construction_stage)
-	_game_map().set_settlement_markers([{"id":"first_city","name":founded_city_name,"position":site.position,"appearance":appearance,"stage":marker_stage,"households":city_households}])
+	_refresh_settlement_markers(appearance)
+
+func _refresh_settlement_markers(capital_appearance:String="") -> void:
+	var game_map:=_game_map()
+	if game_map.world_map==null: return
+	var markers:Array[Dictionary]=[]
+	for city_value in tile_territory.snapshot().get("settlements",{}).values():
+		if city_value is not Dictionary: continue
+		var city:Dictionary=city_value
+		if String(city.get("owner_id",""))!=selected_country: continue
+		var settlement_id:=String(city.get("id",""))
+		var is_capital:bool=settlement_id==tile_city_id or bool(city.get("is_capital",false))
+		var appearance:=capital_appearance if is_capital and capital_appearance!="" else (String(FIRST_CONSTRUCTIONS.get(first_construction_id,{"appearance":"camp"}).get("appearance","camp")) if is_capital else "camp")
+		var stage:=3 if not is_capital or appearance=="camp" else maxi(1,first_construction_stage)
+		markers.append({"id":"first_city" if is_capital else settlement_id,"settlement_id":settlement_id,"name":String(city.get("name","도시")),"position":game_map.world_map.tile_center(int(city.get("column",0)),int(city.get("row",0))),"appearance":appearance,"stage":stage,"households":city_households if is_capital else tile_territory.households(settlement_id).size()})
+	game_map.set_settlement_markers(markers)
 
 func _open_settler_request() -> void:
 	if settler_outcome!="": return
@@ -1768,6 +1893,124 @@ func _priority_project_name() -> String:
 	if first_priority_project_id=="": return "아직 정하지 않음"
 	return String(PRIORITY_PROJECTS[first_priority_project_id].name)
 
+func _settler_status_text() -> String:
+	var queued_text:=""
+	if not settler_orders.is_empty(): queued_text=" · 생산 중 %d턴" % int(settler_orders[0].get("remaining_turns",0))
+	return "보유 개척자 %d%s" % [settler_units,queued_text]
+
+func _queue_settler_production() -> void:
+	if tile_city_id=="" or founded_city_name=="": return
+	if not settler_orders.is_empty():
+		_notify("이미 개척자를 생산하고 있습니다.","warning")
+		return
+	if city_households<5:
+		_notify("개척자를 꾸리려면 정착 가구가 최소 5가구 필요합니다.","warning")
+		return
+	if city_food_reserve<SETTLER_FOOD_COST:
+		_notify("개척자 식량 %d가 부족합니다." % SETTLER_FOOD_COST,"warning")
+		return
+	var status:Dictionary=tile_territory.city_construction_status(tile_city_id)
+	var stockpile:Dictionary=status.get("resource_stockpile",{}).duplicate(true)
+	if float(stockpile.get("wood",0.0))<SETTLER_WOOD_COST:
+		_notify("수레와 장비를 만들 목재 %d가 부족합니다." % int(SETTLER_WOOD_COST),"warning")
+		return
+	stockpile["wood"]=float(stockpile.get("wood",0.0))-SETTLER_WOOD_COST
+	city_food_reserve-=SETTLER_FOOD_COST
+	settler_orders.append({"source_settlement_id":tile_city_id,"remaining_turns":SETTLER_PRODUCTION_TURNS})
+	tile_territory.configure_city_construction(tile_city_id,float(status.get("construction_power_per_turn",0.0)),stockpile)
+	_add_log("일반",_annal_entry("%s이 새 도시를 세울 개척자와 수레를 마련하기 시작하다." % founded_city_name),"normal")
+	_notify("개척자 생산을 시작했습니다. %d턴이 필요합니다." % SETTLER_PRODUCTION_TURNS,"success")
+	_refresh_settler_controls()
+	_autosave_campaign_progress()
+
+func _advance_settler_production() -> void:
+	if settler_orders.is_empty(): return
+	var remaining:Array[Dictionary]=[]
+	for order_value in settler_orders:
+		var order:Dictionary=order_value.duplicate(true)
+		order["remaining_turns"]=maxi(0,int(order.get("remaining_turns",1))-1)
+		if int(order.remaining_turns)<=0:
+			settler_units+=1
+			_add_log("중요",_annal_entry("%s에서 새 개척자 한 무리가 출발 준비를 마치다." % founded_city_name),"important")
+			_notify("개척자 생산이 완료되었습니다. 지도에서 새 도시 터를 지정할 수 있습니다.","success")
+		else: remaining.append(order)
+	settler_orders=remaining
+	_refresh_settler_controls()
+
+func _refresh_settler_controls() -> void:
+	if ui.has("settler_status") and is_instance_valid(ui.settler_status): ui.settler_status.text=_settler_status_text()
+	if ui.has("settler_produce_button") and is_instance_valid(ui.settler_produce_button): ui.settler_produce_button.disabled=not settler_orders.is_empty()
+	if ui.has("settler_dispatch_button") and is_instance_valid(ui.settler_dispatch_button): ui.settler_dispatch_button.disabled=settler_units<=0
+
+func _begin_settler_founding() -> void:
+	if settler_units<=0:
+		_notify("먼저 도시에서 개척자를 생산해야 합니다.","warning")
+		return
+	settler_founding_active=true
+	settler_target_tile=Vector2i(-1,-1)
+	if is_instance_valid(city_detail_dialog): city_detail_dialog.hide()
+	_game_map().set_founding_tile_selection(true,-1)
+	_set_map_mode("resources")
+	if ui.has("action_status"): ui.action_status.text="개척자 파견 · 원하는 육지 타일을 클릭하십시오. 기존 도시에서 3타일 이상 떨어져야 합니다."
+	_notify("개척자를 보낼 타일을 지도에서 클릭하십시오.","info")
+
+func _cancel_settler_founding() -> void:
+	settler_founding_active=false
+	settler_target_tile=Vector2i(-1,-1)
+	_game_map().set_founding_tile_selection(false)
+	if is_instance_valid(additional_city_dialog): additional_city_dialog.hide()
+	if ui.has("action_status"): ui.action_status.text="개척자 파견을 취소했습니다. 보유 개척자는 유지됩니다."
+	_notify("개척자 파견을 취소했습니다.","info")
+
+func _pick_settler_destination(tile:Vector2i) -> void:
+	var validation:Dictionary=tile_territory.can_found_city(_game_map().world_map,tile,selected_country)
+	if not bool(validation.get("ok",false)):
+		_notify(String(validation.get("reason","이 타일에는 새 도시를 세울 수 없습니다.")),"warning")
+		return
+	settler_target_tile=tile
+	_game_map().select_founding_tile(tile)
+	_open_additional_city_naming()
+
+func _recommended_additional_city_name() -> String:
+	var province_id:=_game_map().world_map.province_id(settler_target_tile.x,settler_target_tile.y)
+	var base:=_province_name(province_id) if province_id!=-1 else "새 개척지"
+	for suffix in [" 권역"," 분지"," 유역"]: base=base.trim_suffix(suffix)
+	var serial:int=tile_territory.snapshot().get("settlements",{}).size()+1
+	return "%s 신성 %d" % [base,serial]
+
+func _open_additional_city_naming() -> void:
+	if is_instance_valid(additional_city_dialog): additional_city_dialog.queue_free()
+	additional_city_dialog=Window.new(); additional_city_dialog.title="개척자 파견 · 새 도시"; additional_city_dialog.size=Vector2i(540,310); additional_city_dialog.unresizable=true; additional_city_dialog.exclusive=true
+	var box:=_window_box(additional_city_dialog)
+	var resource:Dictionary=_game_map().world_map.resource_at(settler_target_tile.x,settler_target_tile.y)
+	box.add_child(_label("타일 (%d, %d)에 새 도시를 세웁니다" % [settler_target_tile.x,settler_target_tile.y],21,Color("#dec783")))
+	box.add_child(_label("주요 자원 · %s · 개척자 1개를 소모합니다." % String(resource.get("name","없음")),12,Color("#9eaaad")))
+	additional_city_name_input=LineEdit.new(); additional_city_name_input.text=_recommended_additional_city_name(); additional_city_name_input.max_length=18; box.add_child(additional_city_name_input)
+	var row:=HBoxContainer.new(); row.add_spacer(true); row.add_child(_button("다른 타일 선택",func(): additional_city_dialog.hide(),"default")); row.add_child(_button("이곳에 도시 건설",_confirm_additional_city,"primary")); box.add_child(row)
+	additional_city_dialog.close_requested.connect(func(): additional_city_dialog.hide())
+	add_child(additional_city_dialog); additional_city_dialog.popup_centered(); additional_city_name_input.grab_focus(); additional_city_name_input.select_all()
+
+func _confirm_additional_city() -> void:
+	if settler_units<=0 or settler_target_tile.x<0: return
+	var city_name:=additional_city_name_input.text.strip_edges()
+	if city_name=="": _notify("새 도시 이름을 입력하십시오.","warning"); return
+	var result:Dictionary=tile_territory.found_city(_game_map().world_map,settler_target_tile,selected_country,city_name,{"population":80,"stage":1,"founded_turn":maxi(1,int(gateway.snapshot().get("turn",1)))})
+	if not bool(result.get("ok",false)):
+		_notify(String(result.get("reason","새 도시를 세우지 못했습니다.")),"warning")
+		return
+	var city:Dictionary=result.get("settlement",{})
+	var new_city_id:=String(city.get("id",""))
+	tile_territory.add_households(new_city_id,5,4,"pioneer")
+	tile_territory.configure_city_construction(new_city_id,7.0,{"wood":40.0,"stone":20.0,"iron":5.0})
+	settler_units-=1; settler_founding_active=false; settler_target_tile=Vector2i(-1,-1)
+	_game_map().set_founding_tile_selection(false)
+	if is_instance_valid(additional_city_dialog): additional_city_dialog.hide()
+	_refresh_settlement_markers()
+	_add_log("중요",_annal_entry("%s(플레이어)가 개척자를 보내 새 도시 %s을 세우다." % [_country_name(selected_country),city_name]),"important")
+	if ui.has("action_status"): ui.action_status.text="새 도시 %s 건설 · 남은 개척자 %d" % [city_name,settler_units]
+	_notify("새 도시 %s이 지도에 세워졌습니다." % city_name,"success")
+	_refresh_settler_controls(); _autosave_campaign_progress()
+
 func _city_detail_window_size(viewport_size:Vector2) -> Vector2i:
 	return Vector2i(clampi(int(viewport_size.x*0.82),720,980),clampi(int(viewport_size.y*0.82),480,720))
 
@@ -1835,6 +2078,12 @@ func _open_city_detail(settlement_id:String) -> void:
 	summary.add_child(cards)
 	summary.add_child(_label("농민 %d · 기술자 %d · 경계 인력 %d" % [int(city_population_profile.farmers),int(city_population_profile.artisans),int(city_population_profile.guards)],12,Color("#9eaaad")))
 	summary.add_child(_label("민심 %d / 100" % city_reputation,12,Color("#9eaaad")))
+	ui.settler_status=_label(_settler_status_text(),12,Color("#d7b868")); summary.add_child(ui.settler_status)
+	var settler_actions:=HBoxContainer.new()
+	ui.settler_produce_button=_button("개척자 생산",_queue_settler_production,"default",38); settler_actions.add_child(ui.settler_produce_button)
+	ui.settler_dispatch_button=_button("개척자 파견",_begin_settler_founding,"primary",38); settler_actions.add_child(ui.settler_dispatch_button)
+	summary.add_child(settler_actions)
+	_refresh_settler_controls()
 	summary.add_spacer(true)
 	summary.add_child(_button("인력 배분 열기",func(): tabs.current_tab=1,"primary",40))
 	summary.add_child(_button("닫기",func(): city_detail_dialog.hide(),"default",36))
@@ -2395,8 +2644,11 @@ func _toggle_governor() -> void:
 
 
 func _before_turn(_commands:Array) -> void:
+	for city_value in tile_territory.snapshot().get("settlements",{}).values():
+		if city_value is Dictionary and String(city_value.get("owner_id",""))==selected_country:
+			tile_territory.advance_city_construction(_game_map().world_map,String(city_value.get("id","")),1)
+	_advance_settler_production()
 	if tile_city_id!="" and not tile_territory.settlement(tile_city_id).is_empty():
-		tile_territory.advance_city_construction(_game_map().world_map,tile_city_id,1)
 		if is_instance_valid(tile_city_panel): tile_city_panel.refresh()
 	gateway.set_campaign_save_data(_campaign_save_data())
 	if governor_enabled: _governor_plan()

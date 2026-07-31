@@ -37,7 +37,7 @@ func _run() -> void:
 
     _expect(component.get("base_ui") == root, "통치 컴포넌트가 기준 전략 UI에 직접 조립되어야 한다.")
     _expect(component.get("governance") != null, "GovernanceSession이 생성되어야 한다.")
-    _expect(component.get_node_or_null("GovernanceLauncher") != null, "통치·반란 실행 버튼이 있어야 한다.")
+    _expect(is_instance_valid(component.launcher) and component.launcher.get_parent()==root.ui.governance_slot, "통치·반란 실행 버튼이 지도 오버레이가 아니라 관리 탭에 있어야 한다.")
     _expect(component.get_node_or_null("GovernanceDashboard") != null, "통치 대시보드 창이 있어야 한다.")
 
     var gateway = root.get("gateway")
