@@ -454,6 +454,79 @@ func _run() -> void:
 				== "test_treaty_001",
 				"국경 변경 이력을 단조 증가 리비전으로 남긴다."
 			)
+		var occupation_manager = ManagerScript.new()
+		occupation_manager.load_snapshot(manager.snapshot())
+		var occupation_started: Dictionary = occupation_manager.begin_city_occupation(
+			world_map,
+			first_id,
+			"baekje",
+			"battle_capture_001"
+		)
+		_expect(
+			bool(occupation_started.get("ok", false))
+			and String(occupation_started.get("political_owner_id", ""))
+			== "goguryeo"
+			and String(occupation_started.get("military_controller_id", ""))
+			== "baekje",
+			"도시 함락 직후 중심 타일의 군사 통제만 바뀌고 정치 소유권은 남는다."
+		)
+		var occupation_expanded: Dictionary = (
+			occupation_manager.advance_military_control(
+				world_map,
+				first_id,
+				"baekje",
+				1,
+				"battle_spread_001"
+			)
+		)
+		var controlled_count := int(
+			occupation_expanded.get("controlled_tile_count", 0)
+		)
+		var first_claim_count: int = occupation_manager.settlement(
+			first_id
+		).get("claimed_tile_keys", []).size()
+		_expect(
+			bool(occupation_expanded.get("ok", false))
+			and controlled_count > 1
+			and controlled_count < first_claim_count,
+			"군사 통제는 중심에서 인접 타일로 단계적으로 확장된다."
+		)
+		var sample_controlled_key := String(
+			occupation_expanded.get(
+				"newly_controlled_tile_keys",
+				[]
+			)[0]
+		)
+		var sample_controlled: Dictionary = (
+			occupation_manager.snapshot().tiles[sample_controlled_key]
+		)
+		_expect(
+			String(sample_controlled.get("military_controller_id", "")) == "baekje"
+			and String(sample_controlled.get("political_owner_id", ""))
+			== "goguryeo",
+			"점령이 퍼진 타일도 평화조약 전에는 기존 정치 소유국을 유지한다."
+		)
+		var occupation_treaty: Dictionary = (
+			occupation_manager.finalize_occupation_by_treaty(
+				first_id,
+				"baekje",
+				"peace_treaty_occupation_001"
+			)
+		)
+		_expect(
+			bool(occupation_treaty.get("ok", false))
+			and int(occupation_treaty.get("transferred_tile_count", 0))
+			== first_claim_count,
+			"평화조약이 체결되어야 도시 영토의 정치 소유권이 공식 이전된다."
+		)
+		_expect(
+			String(
+				occupation_manager.settlement(first_id).get("owner_id", "")
+			)
+			== "baekje"
+			and bool(occupation_manager.validate_state(world_map).get("ok", false)),
+			"조약 완료 후 도시·타일 소유권과 군사 통제 상태가 일관된다."
+		)
 	var duplicate_capital: Dictionary = manager.found_initial_city(
 		world_map,
 		first_tile,

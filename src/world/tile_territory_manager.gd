@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 8
+const STATE_VERSION := 9
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -61,6 +61,8 @@ func reset() -> void:
 		"regions": {},
 		"border_events": [],
 		"next_border_revision": 1,
+		"military_events": [],
+		"next_military_revision": 1,
 		"next_settlement_id": 1,
 	}
 
@@ -80,6 +82,12 @@ func load_snapshot(source: Dictionary) -> void:
 	_state["next_border_revision"] = maxi(
 		1,
 		int(_state.get("next_border_revision", 1))
+	)
+	if _state.get("military_events", []) is not Array:
+		_state["military_events"] = []
+	_state["next_military_revision"] = maxi(
+		1,
+		int(_state.get("next_military_revision", 1))
 	)
 	_migrate_legacy_management_links()
 	_state["next_settlement_id"] = _normalized_next_settlement_id(
@@ -440,6 +448,274 @@ func border_edges(
 
 func border_events() -> Array:
 	return _state.get("border_events", []).duplicate(true)
+
+
+func military_events() -> Array:
+	return _state.get("military_events", []).duplicate(true)
+
+
+func begin_city_occupation(
+	world_map,
+	settlement_id: String,
+	occupying_owner_id: String,
+	event_id: String
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "점령할 도시가 없습니다.",
+		}
+	if occupying_owner_id.is_empty() or event_id.strip_edges().is_empty():
+		return {
+			"ok": false,
+			"reason_code": "occupation_event_invalid",
+			"reason": "점령 세력과 전투 이벤트 식별자가 필요합니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	if String(settlement_record.get("owner_id", "")) == occupying_owner_id:
+		return {
+			"ok": false,
+			"reason_code": "already_friendly_city",
+			"reason": "자국 도시는 적대 점령할 수 없습니다.",
+		}
+	var center := Vector2i(
+		int(settlement_record.get("column", -1)),
+		int(settlement_record.get("row", -1))
+	)
+	var tile_check := _validate_existing_tile(world_map, center)
+	if not bool(tile_check.get("ok", false)):
+		return tile_check
+	var center_key := String(tile_check.get("tile_key", ""))
+	var center_tile: Dictionary = tile_check.get("tile_record", {})
+	center_tile["military_controller_id"] = occupying_owner_id
+	center_tile["military_control_revision"] = int(
+		_state.get("next_military_revision", 1)
+	)
+	_state.tiles[center_key] = center_tile
+	settlement_record["occupation"] = {
+		"active": true,
+		"occupying_owner_id": occupying_owner_id,
+		"started_event_id": event_id,
+		"controlled_tile_count": 1,
+	}
+	_state.settlements[settlement_id] = settlement_record
+	var event := _record_military_event(
+		"city_center_captured",
+		event_id,
+		settlement_id,
+		occupying_owner_id,
+		[center_key]
+	)
+	center_tile = _state.tiles[center_key]
+	center_tile["last_military_event"] = event.duplicate(true)
+	_state.tiles[center_key] = center_tile
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"center_tile_key": center_key,
+		"political_owner_id": String(
+			center_tile.get("political_owner_id", "")
+		),
+		"military_controller_id": occupying_owner_id,
+		"event": event,
+	}
+
+
+func advance_military_control(
+	world_map,
+	settlement_id: String,
+	occupying_owner_id: String,
+	steps: int,
+	event_id: String
+) -> Dictionary:
+	if steps <= 0:
+		return {
+			"ok": false,
+			"reason_code": "occupation_steps_invalid",
+			"reason": "군사 통제 확장 단계는 1 이상이어야 합니다.",
+		}
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "군사 통제를 확장할 도시가 없습니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var occupation: Dictionary = settlement_record.get("occupation", {})
+	if (
+		not bool(occupation.get("active", false))
+		or String(occupation.get("occupying_owner_id", "")) != occupying_owner_id
+	):
+		return {
+			"ok": false,
+			"reason_code": "occupation_not_started",
+			"reason": "도시 중심을 먼저 점령해야 군사 통제를 넓힐 수 있습니다.",
+		}
+	var all_new_keys: Array[String] = []
+	var offsets: Array[Vector2i] = [
+		Vector2i(-1, 0),
+		Vector2i(1, 0),
+		Vector2i(0, -1),
+		Vector2i(0, 1),
+	]
+	for unused_step in range(steps):
+		var sources: Array[Vector2i] = []
+		for tile_record in managed_tiles(settlement_id):
+			if (
+				String(tile_record.get("military_controller_id", ""))
+				== occupying_owner_id
+			):
+				sources.append(
+					Vector2i(
+						int(tile_record.get("column", -1)),
+						int(tile_record.get("row", -1))
+					)
+				)
+		var step_keys: Dictionary = {}
+		for source in sources:
+			for offset in offsets:
+				var candidate: Vector2i = source + offset
+				if not world_map.contains(candidate.x, candidate.y):
+					continue
+				var key := _tile_key(world_map, candidate)
+				var tile_record: Dictionary = _state.get("tiles", {}).get(key, {})
+				if (
+					String(tile_record.get("managing_settlement_id", ""))
+					!= settlement_id
+					or String(tile_record.get("military_controller_id", ""))
+					== occupying_owner_id
+				):
+					continue
+				step_keys[key] = true
+		if step_keys.is_empty():
+			break
+		for key_value in step_keys.keys():
+			var key := String(key_value)
+			var tile_record: Dictionary = _state.tiles[key]
+			tile_record["military_controller_id"] = occupying_owner_id
+			_state.tiles[key] = tile_record
+			all_new_keys.append(key)
+	if not all_new_keys.is_empty():
+		var event := _record_military_event(
+			"military_control_expanded",
+			event_id,
+			settlement_id,
+			occupying_owner_id,
+			all_new_keys
+		)
+		for key in all_new_keys:
+			var tile_record: Dictionary = _state.tiles[key]
+			tile_record["military_control_revision"] = int(event.revision)
+			tile_record["last_military_event"] = event.duplicate(true)
+			_state.tiles[key] = tile_record
+	occupation["controlled_tile_count"] = military_controlled_tiles(
+		settlement_id,
+		occupying_owner_id
+	).size()
+	settlement_record["occupation"] = occupation
+	_state.settlements[settlement_id] = settlement_record
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"newly_controlled_tile_keys": all_new_keys,
+		"controlled_tile_count": int(occupation.controlled_tile_count),
+		"political_owner_id": String(settlement_record.get("owner_id", "")),
+	}
+
+
+func military_controlled_tiles(
+	settlement_id: String,
+	controller_id: String
+) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for tile_record in managed_tiles(settlement_id):
+		if String(tile_record.get("military_controller_id", "")) == controller_id:
+			result.append(tile_record)
+	return result
+
+
+func finalize_occupation_by_treaty(
+	settlement_id: String,
+	occupying_owner_id: String,
+	event_id: String
+) -> Dictionary:
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "조약으로 이전할 도시가 없습니다.",
+		}
+	if event_id.strip_edges().is_empty():
+		return {
+			"ok": false,
+			"reason_code": "treaty_event_id_missing",
+			"reason": "평화조약 이벤트 식별자가 필요합니다.",
+		}
+	var settlement_record: Dictionary = _state.settlements[settlement_id]
+	var occupation: Dictionary = settlement_record.get("occupation", {})
+	if (
+		not bool(occupation.get("active", false))
+		or String(occupation.get("occupying_owner_id", "")) != occupying_owner_id
+	):
+		return {
+			"ok": false,
+			"reason_code": "occupation_not_started",
+			"reason": "활성화된 도시 점령 상태가 아닙니다.",
+		}
+	var old_owner_id := String(settlement_record.get("owner_id", ""))
+	var revision := maxi(1, int(_state.get("next_border_revision", 1)))
+	var claimed_keys: Array = settlement_record.get("claimed_tile_keys", [])
+	var treaty_event := {
+		"revision": revision,
+		"event_id": event_id,
+		"event_type": "occupation_peace_treaty",
+		"settlement_id": settlement_id,
+		"tile_keys": claimed_keys.duplicate(),
+		"from_owner_id": old_owner_id,
+		"to_owner_id": occupying_owner_id,
+	}
+	for key_value in claimed_keys:
+		var key := String(key_value)
+		if not _state.get("tiles", {}).has(key):
+			continue
+		var tile_record: Dictionary = _state.tiles[key]
+		tile_record["owner_id"] = occupying_owner_id
+		tile_record["political_owner_id"] = occupying_owner_id
+		tile_record["military_controller_id"] = occupying_owner_id
+		tile_record["border_revision"] = revision
+		tile_record["last_border_event"] = treaty_event.duplicate(true)
+		_state.tiles[key] = tile_record
+	settlement_record["owner_id"] = occupying_owner_id
+	settlement_record["occupation"] = {
+		"active": false,
+		"occupying_owner_id": "",
+		"resolved_event_id": event_id,
+		"controlled_tile_count": claimed_keys.size(),
+	}
+	_state.settlements[settlement_id] = settlement_record
+	_state.border_events.append(treaty_event)
+	_state["next_border_revision"] = revision + 1
+	var military_event := _record_military_event(
+		"occupation_finalized_by_treaty",
+		event_id,
+		settlement_id,
+		occupying_owner_id,
+		claimed_keys
+	)
+	_rebuild_regions()
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"from_owner_id": old_owner_id,
+		"to_owner_id": occupying_owner_id,
+		"transferred_tile_count": claimed_keys.size(),
+		"border_revision": revision,
+		"military_event": military_event,
+	}
 
 
 func transfer_tile_affiliation(
@@ -1360,6 +1636,10 @@ func validate_state(world_map) -> Dictionary:
 			errors.append("tile_political_owner_mismatch:%s" % tile_key)
 		if int(tile_record.get("border_revision", 0)) < 0:
 			errors.append("tile_border_revision_invalid:%s" % tile_key)
+		if String(tile_record.get("military_controller_id", "")).is_empty():
+			errors.append("tile_military_controller_missing:%s" % tile_key)
+		if int(tile_record.get("military_control_revision", 0)) < 0:
+			errors.append("tile_military_revision_invalid:%s" % tile_key)
 		if String(tile_record.get("region_id", "")) != _region_id(world_map, tile):
 			errors.append("tile_region_mismatch:%s" % tile_key)
 		var linked_settlement_id := String(tile_record.get("settlement_id", ""))
@@ -1648,6 +1928,21 @@ func validate_state(world_map) -> Dictionary:
 		previous_revision = maxi(previous_revision, revision)
 	if int(_state.get("next_border_revision", 0)) <= previous_revision:
 		errors.append("next_border_revision_invalid")
+	var previous_military_revision := 0
+	for event_value in _state.get("military_events", []):
+		if event_value is not Dictionary:
+			errors.append("military_event_not_dictionary")
+			continue
+		var event: Dictionary = event_value
+		var revision := int(event.get("revision", 0))
+		if (
+			revision <= previous_military_revision
+			or String(event.get("event_id", "")).is_empty()
+		):
+			errors.append("military_event_revision_invalid:%d" % revision)
+		previous_military_revision = maxi(previous_military_revision, revision)
+	if int(_state.get("next_military_revision", 0)) <= previous_military_revision:
+		errors.append("next_military_revision_invalid")
 	if int(_state.get("next_settlement_id", 0)) < 1:
 		errors.append("next_settlement_id_invalid")
 	return {
@@ -1716,6 +2011,11 @@ func _found_validated_city(
 		"next_household_id": 1,
 		"city_yield_modifiers": {},
 		"technology_yield_modifiers": {},
+		"occupation": {
+			"active": false,
+			"occupying_owner_id": "",
+			"controlled_tile_count": 0,
+		},
 		"construction_power_per_turn": 0.0,
 		"construction_overflow": 0.0,
 		"resource_stockpile": {"wood": 0.0, "stone": 0.0, "iron": 0.0},
@@ -1778,6 +2078,9 @@ func _make_tile_record(
 		"row": tile.y,
 		"owner_id": owner_id,
 		"political_owner_id": owner_id,
+		"military_controller_id": owner_id,
+		"military_control_revision": 0,
+		"last_military_event": {},
 		"region_id": _region_id(world_map, tile),
 		"province_id": int(world_map.province_id(tile.x, tile.y)),
 		"terrain_id": int(world_map.terrain_id(tile.x, tile.y)),
@@ -1791,6 +2094,27 @@ func _make_tile_record(
 		"border_revision": 0,
 		"last_border_event": {},
 	}
+
+
+func _record_military_event(
+	event_type: String,
+	event_id: String,
+	settlement_id: String,
+	controller_id: String,
+	tile_keys: Array
+) -> Dictionary:
+	var revision := maxi(1, int(_state.get("next_military_revision", 1)))
+	var event := {
+		"revision": revision,
+		"event_id": event_id,
+		"event_type": event_type,
+		"settlement_id": settlement_id,
+		"controller_id": controller_id,
+		"tile_keys": tile_keys.duplicate(),
+	}
+	_state.military_events.append(event)
+	_state["next_military_revision"] = revision + 1
+	return event
 
 
 func _validate_existing_tile(world_map, tile: Vector2i) -> Dictionary:
@@ -2047,6 +2371,18 @@ func _migrate_legacy_management_links() -> void:
 		var settlement_record: Dictionary = settlement_value
 		if settlement_record.get("households", {}) is not Dictionary:
 			settlement_record["households"] = {}
+		if settlement_record.get("occupation", {}) is not Dictionary:
+			settlement_record["occupation"] = {}
+		var occupation: Dictionary = settlement_record.get("occupation", {})
+		occupation["active"] = bool(occupation.get("active", false))
+		occupation["occupying_owner_id"] = String(
+			occupation.get("occupying_owner_id", "")
+		)
+		occupation["controlled_tile_count"] = maxi(
+			0,
+			int(occupation.get("controlled_tile_count", 0))
+		)
+		settlement_record["occupation"] = occupation
 		settlement_record["construction_power_per_turn"] = maxf(
 			0.0,
 			float(settlement_record.get("construction_power_per_turn", 0.0))
@@ -2095,6 +2431,16 @@ func _migrate_legacy_management_links() -> void:
 			var owner_id := String(tile_record.get("owner_id", ""))
 			if String(tile_record.get("political_owner_id", "")).is_empty():
 				tile_record["political_owner_id"] = owner_id
+			if String(tile_record.get("military_controller_id", "")).is_empty():
+				tile_record["military_controller_id"] = String(
+					tile_record.get("political_owner_id", owner_id)
+				)
+			tile_record["military_control_revision"] = maxi(
+				0,
+				int(tile_record.get("military_control_revision", 0))
+			)
+			if tile_record.get("last_military_event", {}) is not Dictionary:
+				tile_record["last_military_event"] = {}
 			tile_record["owner_id"] = String(
 				tile_record.get("political_owner_id", owner_id)
 			)
