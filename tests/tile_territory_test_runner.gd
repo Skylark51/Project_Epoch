@@ -454,6 +454,93 @@ func _run() -> void:
 				== "test_treaty_001",
 				"국경 변경 이력을 단조 증가 리비전으로 남긴다."
 			)
+		var removal_manager = ManagerScript.new()
+		var removal_pair := _find_support_city_pair(
+			removal_manager,
+			world_map,
+			"goguryeo"
+		)
+		_expect(
+			removal_pair.size() == 2,
+			"실제 지도에서 영향권이 맞닿는 같은 국가 도시쌍을 찾는다."
+		)
+		if removal_pair.size() == 2:
+			var removal_first_tile: Vector2i = removal_pair[0]
+			var support_tile: Vector2i = removal_pair[1]
+			var removal_first_result: Dictionary = (
+				removal_manager.found_initial_city(
+					world_map,
+					removal_first_tile,
+					"goguryeo",
+					"폐기 대상 도시"
+				)
+			)
+			var removal_first_id := String(
+				removal_first_result.get("settlement", {}).get("id", "")
+			)
+			var support_result: Dictionary = removal_manager.found_city(
+				world_map,
+				support_tile,
+				"goguryeo",
+				"지원 소도시"
+			)
+			var support_id := String(
+				support_result.get("settlement", {}).get("id", "")
+			)
+			removal_manager.expand_city_influence(
+				world_map,
+				removal_first_id,
+				2
+			)
+			removal_manager.expand_city_influence(world_map, support_id, 2)
+			var removal: Dictionary = removal_manager.remove_city(
+				world_map,
+				removal_first_id,
+				"destroyed",
+				"city_destroyed_001"
+			)
+			_expect(
+				bool(removal.get("ok", false))
+				and int(removal.get("reassigned_tile_count", 0)) > 0
+				and int(removal.get("neutral_tile_count", 0)) > 0,
+				"도시 파괴 시 같은 국가 영향에 닿는 타일만 재귀속하고 나머지는 중립화한다."
+			)
+			_expect(
+				removal_manager.settlement(removal_first_id).is_empty(),
+				"파괴된 도시는 도시 목록과 중심 타일 연결에서 제거된다."
+			)
+			var reassigned_key := _first_nested_key(
+				removal.get("reassigned_tile_keys_by_settlement", {})
+			)
+			var reassigned_record: Dictionary = (
+				removal_manager.snapshot().tiles.get(reassigned_key, {})
+			)
+			_expect(
+				String(
+					reassigned_record.get("managing_settlement_id", "")
+				)
+				== support_id,
+				"재귀속 타일은 실제 반경에 닿은 같은 국가 도시에 귀속된다."
+			)
+			var neutral_key := String(removal.get("neutral_tile_keys", [])[0])
+			var neutral_tile := _tile_from_key(world_map, neutral_key)
+			var neutral_record := removal_manager.neutral_tile_state(
+				world_map,
+				neutral_tile
+			)
+			_expect(
+				String(neutral_record.get("owner_id", "")).is_empty()
+				and bool(neutral_record.get("ruins", false))
+				and removal_manager.tile_state(
+					world_map,
+					neutral_tile
+				).is_empty(),
+				"인접 도시 반경 밖 타일은 개발 흔적을 보존한 중립 폐허가 된다."
+			)
+			_expect(
+				bool(removal_manager.validate_state(world_map).get("ok", false)),
+				"도시 제거와 재귀속 이후에도 타일 참조 무결성을 유지한다."
+			)
 		var occupation_manager = ManagerScript.new()
 		occupation_manager.load_snapshot(manager.snapshot())
 		var occupation_started: Dictionary = occupation_manager.begin_city_occupation(
@@ -629,6 +716,58 @@ func _find_settleable_in_distance(
 	return Vector2i(-1, -1)
 
 
+func _find_support_city_pair(
+	manager,
+	world_map,
+	owner_id: String
+) -> Array[Vector2i]:
+	for index_value in world_map.assigned_indices:
+		var index := int(index_value)
+		var first := Vector2i(index % world_map.width, index / world_map.width)
+		if not bool(manager.can_found_city(world_map, first, owner_id).get("ok", false)):
+			continue
+		for distance in range(
+			ManagerScript.MIN_CITY_CENTER_DISTANCE,
+			ManagerScript.CITY_MAX_INFLUENCE_RADIUS * 2 + 1
+		):
+			for row in range(first.y - distance, first.y + distance + 1):
+				for column in range(first.x - distance, first.x + distance + 1):
+					var second := Vector2i(column, row)
+					if manager.city_center_distance(first, second) != distance:
+						continue
+					if bool(
+						manager.can_found_city(
+							world_map,
+							second,
+							owner_id
+						).get("ok", false)
+					):
+						return [first, second]
+	return []
+
+
+func _find_support_city_site(
+	manager,
+	world_map,
+	origin: Vector2i,
+	owner_id: String
+) -> Vector2i:
+	for distance in range(
+		ManagerScript.MIN_CITY_CENTER_DISTANCE,
+		ManagerScript.CITY_MAX_INFLUENCE_RADIUS * 2 + 1
+	):
+		var candidate := _find_foundable_at_exact_distance(
+			manager,
+			world_map,
+			origin,
+			distance,
+			owner_id
+		)
+		if candidate.x >= 0:
+			return candidate
+	return Vector2i(-1, -1)
+
+
 func _find_foundable_at_exact_distance(
 	manager,
 	world_map,
@@ -684,6 +823,18 @@ func _no_shared_keys(first: Dictionary, second: Dictionary) -> bool:
 		if second.has(key):
 			return false
 	return true
+
+
+func _first_nested_key(source: Dictionary) -> String:
+	for value in source.values():
+		if value is Array and not value.is_empty():
+			return String(value[0])
+	return ""
+
+
+func _tile_from_key(world_map, tile_key: String) -> Vector2i:
+	var index := int(tile_key)
+	return Vector2i(index % int(world_map.width), index / int(world_map.width))
 
 
 func _border_tile_for_settlement(

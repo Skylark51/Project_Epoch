@@ -1,7 +1,7 @@
 class_name TileTerritoryManager
 extends RefCounted
 
-const STATE_VERSION := 9
+const STATE_VERSION := 10
 const INITIAL_POPULATION := 120
 const INITIAL_CLAIM_RADIUS := 1
 const CITY_EXCLUSION_RADIUS := 2
@@ -57,6 +57,7 @@ func reset() -> void:
 	_state = {
 		"data_version": STATE_VERSION,
 		"tiles": {},
+		"neutral_tiles": {},
 		"settlements": {},
 		"regions": {},
 		"border_events": [],
@@ -74,7 +75,7 @@ func load_snapshot(source: Dictionary) -> void:
 	_state = source.duplicate(true)
 	var source_version := int(_state.get("data_version", 1))
 	_state["data_version"] = source_version if source_version > STATE_VERSION else STATE_VERSION
-	for key in ["tiles", "settlements", "regions"]:
+	for key in ["tiles", "neutral_tiles", "settlements", "regions"]:
 		if _state.get(key, {}) is not Dictionary:
 			_state[key] = {}
 	if _state.get("border_events", []) is not Array:
@@ -210,6 +211,124 @@ func tile_state(world_map, tile: Vector2i) -> Dictionary:
 	if world_map == null or not world_map.contains(tile.x, tile.y):
 		return {}
 	return _state.get("tiles", {}).get(_tile_key(world_map, tile), {}).duplicate(true)
+
+
+func neutral_tile_state(world_map, tile: Vector2i) -> Dictionary:
+	if world_map == null or not world_map.contains(tile.x, tile.y):
+		return {}
+	return _state.get("neutral_tiles", {}).get(
+		_tile_key(world_map, tile),
+		{}
+	).duplicate(true)
+
+
+func remove_city(
+	world_map,
+	settlement_id: String,
+	removal_mode: String,
+	event_id: String
+) -> Dictionary:
+	if removal_mode not in ["abandoned", "destroyed"]:
+		return {
+			"ok": false,
+			"reason_code": "city_removal_mode_invalid",
+			"reason": "도시는 폐기 또는 파괴 상태로만 제거할 수 있습니다.",
+		}
+	if event_id.strip_edges().is_empty():
+		return {
+			"ok": false,
+			"reason_code": "city_removal_event_missing",
+			"reason": "도시 제거 이벤트 식별자가 필요합니다.",
+		}
+	if not _state.get("settlements", {}).has(settlement_id):
+		return {
+			"ok": false,
+			"reason_code": "settlement_missing",
+			"reason": "제거할 도시가 없습니다.",
+		}
+	var removed_settlement: Dictionary = _state.settlements[settlement_id]
+	var owner_id := String(removed_settlement.get("owner_id", ""))
+	var claimed_keys: Array = removed_settlement.get("claimed_tile_keys", []).duplicate()
+	var revision := maxi(1, int(_state.get("next_border_revision", 1)))
+	var reassigned: Dictionary = {}
+	var neutral_keys: Array[String] = []
+	_state.settlements.erase(settlement_id)
+	for key_value in claimed_keys:
+		var key := String(key_value)
+		if not _state.get("tiles", {}).has(key):
+			continue
+		var tile_record: Dictionary = _state.tiles[key]
+		var tile := Vector2i(
+			int(tile_record.get("column", -1)),
+			int(tile_record.get("row", -1))
+		)
+		var successor_id := _nearest_same_owner_city_for_tile(
+			tile,
+			owner_id
+		)
+		if not successor_id.is_empty():
+			tile_record["owner_id"] = owner_id
+			tile_record["political_owner_id"] = owner_id
+			tile_record["military_controller_id"] = owner_id
+			tile_record["settlement_id"] = ""
+			tile_record["managing_settlement_id"] = successor_id
+			tile_record["worked"] = false
+			tile_record["work_mode"] = "unworked"
+			tile_record["assigned_household_id"] = ""
+			tile_record["border_revision"] = revision
+			tile_record["last_border_event"] = {
+				"event_id": event_id,
+				"event_type": "city_%s_reassignment" % removal_mode,
+				"from_settlement_id": settlement_id,
+				"to_settlement_id": successor_id,
+			}
+			_state.tiles[key] = tile_record
+			_add_claimed_tile_to_settlement(successor_id, key)
+			if not reassigned.has(successor_id):
+				reassigned[successor_id] = []
+			reassigned[successor_id].append(key)
+			continue
+		var neutral_record := tile_record.duplicate(true)
+		neutral_record["former_owner_id"] = owner_id
+		neutral_record["former_settlement_id"] = settlement_id
+		neutral_record["owner_id"] = ""
+		neutral_record["political_owner_id"] = ""
+		neutral_record["military_controller_id"] = ""
+		neutral_record["settlement_id"] = ""
+		neutral_record["managing_settlement_id"] = ""
+		neutral_record["worked"] = false
+		neutral_record["work_mode"] = "unworked"
+		neutral_record["assigned_household_id"] = ""
+		neutral_record["neutral_since_event_id"] = event_id
+		neutral_record["neutral_reason"] = removal_mode
+		neutral_record["ruins"] = removal_mode == "destroyed"
+		neutral_record["border_revision"] = revision
+		_state.neutral_tiles[key] = neutral_record
+		_state.tiles.erase(key)
+		neutral_keys.append(key)
+	var border_event := {
+		"revision": revision,
+		"event_id": event_id,
+		"event_type": "city_%s" % removal_mode,
+		"settlement_id": settlement_id,
+		"owner_id": owner_id,
+		"reassigned_tile_keys_by_settlement": reassigned.duplicate(true),
+		"neutral_tile_keys": neutral_keys.duplicate(),
+	}
+	_state.border_events.append(border_event)
+	_state["next_border_revision"] = revision + 1
+	_rebuild_regions()
+	return {
+		"ok": true,
+		"reason_code": "ok",
+		"settlement_id": settlement_id,
+		"removal_mode": removal_mode,
+		"reassigned_tile_keys_by_settlement": reassigned,
+		"reassigned_tile_count": _nested_array_size(reassigned),
+		"neutral_tile_keys": neutral_keys,
+		"neutral_tile_count": neutral_keys.size(),
+		"border_revision": revision,
+	}
 
 
 func settlement_at(world_map, tile: Vector2i) -> Dictionary:
@@ -1609,6 +1728,7 @@ func validate_state(world_map) -> Dictionary:
 	if int(_state.get("data_version", 0)) > STATE_VERSION:
 		errors.append("unsupported_state_version")
 	var tiles: Dictionary = _state.get("tiles", {})
+	var neutral_tiles: Dictionary = _state.get("neutral_tiles", {})
 	var settlements: Dictionary = _state.get("settlements", {})
 	var occupied_centers: Dictionary = {}
 	for tile_key_value in tiles.keys():
@@ -1699,6 +1819,34 @@ func validate_state(world_map) -> Dictionary:
 					or int(linked_settlement.get("row", -1)) != tile.y
 				):
 					errors.append("tile_settlement_center_mismatch:%s" % tile_key)
+	for neutral_key_value in neutral_tiles.keys():
+		var neutral_key := String(neutral_key_value)
+		var neutral_value = neutral_tiles[neutral_key_value]
+		if neutral_value is not Dictionary:
+			errors.append("neutral_tile_not_dictionary:%s" % neutral_key)
+			continue
+		var neutral_record: Dictionary = neutral_value
+		var neutral_tile := Vector2i(
+			int(neutral_record.get("column", -1)),
+			int(neutral_record.get("row", -1))
+		)
+		if (
+			not world_map.contains(neutral_tile.x, neutral_tile.y)
+			or neutral_key != _tile_key(world_map, neutral_tile)
+		):
+			errors.append("neutral_tile_key_invalid:%s" % neutral_key)
+		if (
+			not String(neutral_record.get("owner_id", "")).is_empty()
+			or not String(
+				neutral_record.get("managing_settlement_id", "")
+			).is_empty()
+			or not String(
+				neutral_record.get("political_owner_id", "")
+			).is_empty()
+		):
+			errors.append("neutral_tile_affiliation_invalid:%s" % neutral_key)
+		if tiles.has(neutral_key):
+			errors.append("neutral_tile_also_claimed:%s" % neutral_key)
 	for settlement_key_value in settlements.keys():
 		var settlement_key := String(settlement_key_value)
 		var settlement_value = settlements[settlement_key_value]
@@ -1950,6 +2098,7 @@ func validate_state(world_map) -> Dictionary:
 		"errors": errors,
 		"warnings": warnings,
 		"tile_count": tiles.size(),
+		"neutral_tile_count": neutral_tiles.size(),
 		"settlement_count": settlements.size(),
 		"region_count": _state.get("regions", {}).size(),
 	}
@@ -2073,7 +2222,9 @@ func _make_tile_record(
 	settlement_id: String,
 	managing_settlement_id: String
 ) -> Dictionary:
-	return {
+	var key := _tile_key(world_map, tile)
+	var neutral_record: Dictionary = _state.get("neutral_tiles", {}).get(key, {})
+	var record := {
 		"column": tile.x,
 		"row": tile.y,
 		"owner_id": owner_id,
@@ -2089,11 +2240,59 @@ func _make_tile_record(
 		"worked": not settlement_id.is_empty(),
 		"work_mode": "city_center" if not settlement_id.is_empty() else "unworked",
 		"assigned_household_id": "",
-		"special_resources": [],
-		"facility_levels": {},
-		"border_revision": 0,
-		"last_border_event": {},
+		"special_resources": neutral_record.get("special_resources", []).duplicate(true),
+		"facility_levels": neutral_record.get("facility_levels", {}).duplicate(true),
+		"border_revision": int(neutral_record.get("border_revision", 0)),
+		"last_border_event": neutral_record.get("last_border_event", {}).duplicate(true),
 	}
+	_state.get("neutral_tiles", {}).erase(key)
+	return record
+
+
+func _nearest_same_owner_city_for_tile(
+	tile: Vector2i,
+	owner_id: String
+) -> String:
+	var candidates: Array[Dictionary] = []
+	for settlement_value in _state.get("settlements", {}).values():
+		if settlement_value is not Dictionary:
+			continue
+		var settlement_record: Dictionary = settlement_value
+		if String(settlement_record.get("owner_id", "")) != owner_id:
+			continue
+		var center := Vector2i(
+			int(settlement_record.get("column", -1000000)),
+			int(settlement_record.get("row", -1000000))
+		)
+		var distance := city_center_distance(tile, center)
+		if distance > int(
+			settlement_record.get(
+				"influence_radius",
+				INITIAL_CLAIM_RADIUS
+			)
+		):
+			continue
+		candidates.append(
+			{
+				"id": String(settlement_record.get("id", "")),
+				"distance": distance,
+			}
+		)
+	candidates.sort_custom(
+		func(first: Dictionary, second: Dictionary) -> bool:
+			if int(first.distance) == int(second.distance):
+				return String(first.id) < String(second.id)
+			return int(first.distance) < int(second.distance)
+	)
+	return "" if candidates.is_empty() else String(candidates[0].id)
+
+
+func _nested_array_size(source: Dictionary) -> int:
+	var total := 0
+	for value in source.values():
+		if value is Array:
+			total += value.size()
+	return total
 
 
 func _record_military_event(
@@ -2362,7 +2561,24 @@ func _take_next_settlement_id() -> String:
 
 func _migrate_legacy_management_links() -> void:
 	var tiles: Dictionary = _state.get("tiles", {})
+	var neutral_tiles: Dictionary = _state.get("neutral_tiles", {})
 	var settlements: Dictionary = _state.get("settlements", {})
+	for neutral_key_value in neutral_tiles.keys():
+		var neutral_value = neutral_tiles[neutral_key_value]
+		if neutral_value is not Dictionary:
+			neutral_tiles.erase(neutral_key_value)
+			continue
+		var neutral_record: Dictionary = neutral_value
+		neutral_record["owner_id"] = ""
+		neutral_record["political_owner_id"] = ""
+		neutral_record["military_controller_id"] = ""
+		neutral_record["settlement_id"] = ""
+		neutral_record["managing_settlement_id"] = ""
+		neutral_record["worked"] = false
+		neutral_record["work_mode"] = "unworked"
+		neutral_record["assigned_household_id"] = ""
+		neutral_tiles[neutral_key_value] = neutral_record
+	_state["neutral_tiles"] = neutral_tiles
 	for settlement_key_value in settlements.keys():
 		var settlement_id := String(settlement_key_value)
 		var settlement_value = settlements[settlement_key_value]
