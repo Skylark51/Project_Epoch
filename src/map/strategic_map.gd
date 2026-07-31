@@ -614,7 +614,7 @@ func founding_site_candidates(province_id: int) -> Array[Dictionary]:
         var row:=tile_index/world_map.width; var column:=tile_index%world_map.width
         if world_map.province_id(column,row)!=province_id: continue
         var terrain_id:=world_map.terrain_id(column,row)
-        if terrain_id<=2 or terrain_id==13: continue
+        if terrain_id<=3 or terrain_id in [8,13]: continue
         var candidate:={"position":world_map.tile_center(column,row),"terrain":world_map.terrain_name(terrain_id)}
         buckets.all.append(candidate)
         if terrain_id in [4,5,10]: buckets.farmland.append(candidate)

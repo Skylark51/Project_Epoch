@@ -98,6 +98,8 @@ func _run() -> void:
     app._confirm_city_name()
     await process_frame
     check(app.founded_city_name == "새국내", "player can freely replace the recommended city name")
+    check(app.tile_city_id != "" and app.tile_territory.has_capital("goguryeo"), "city naming founds one real capital on the selected map tile")
+    check(app.tile_territory.managed_tiles(app.tile_city_id).size() >= 4, "new capital immediately owns its local tile management area")
     check(app.first_construction_dialog != null and app.first_construction_dialog.visible, "city naming proceeds directly to the first construction choice")
     check("우물과 저장고" in app.ui.construction_recommendation.text, "founding terrain produces a highlighted construction recommendation")
     check(app.ui.first_construction_buttons.size() == 3, "all three first constructions remain directly selectable")
@@ -119,11 +121,14 @@ func _run() -> void:
     check(app.first_construction_stage == 2 and int(app._game_map().settlement_markers[0].stage) == 2, "construction advances to visible foundations and framing")
     app._advance_first_construction_stage()
     check(app.first_construction_stage == 3 and int(app._game_map().settlement_markers[0].stage) == 3, "construction reaches the completed visual stage")
+    var tile_center:Vector2i=app._tile_city_center()
+    check(int(app.tile_territory.tile_state(app._game_map().world_map,tile_center).get("facility_levels",{}).get("fort",0))==1, "completed founding project upgrades the matching center-tile facility")
     await process_frame
     check(app.settler_dialog != null and app.settler_dialog.visible, "the thirty-household settler situation follows the first completed construction")
     check(app.ui.settler_choice_buttons.size() == 3, "settler situation offers full acceptance, selective acceptance, and refusal")
     app._choose_settler_response("selective")
     check(app.settler_outcome == "selective" and app.city_households == 18, "selective acceptance settles eighteen households")
+    check(app.tile_territory.households(app.tile_city_id).size()==18, "accepted households enter the real tile-assignment pool")
     check(int(app.city_population_profile.artisans) == 7 and app.city_food_reserve == 90 and app.city_reputation == 52, "settler choice applies population, food, and reputation consequences")
     check(int(app._game_map().settlement_markers[0].households) == 18, "settler population feeds the central-map city scale")
     check(app._game_map().settlement_visual_key(app._game_map().settlement_markers[0]) == "palisade", "central map keeps the completed three-quarter city type after population growth")
@@ -147,7 +152,19 @@ func _run() -> void:
     check(app.city_detail_dialog != null and app.city_detail_dialog.visible, "double-clicking the city opens its detailed adjustment screen")
     var compact_city_size:Vector2i=app._city_detail_window_size(Vector2(1024,576))
     check(compact_city_size.x<1024 and compact_city_size.y<576, "city administration window scales inside a compact viewport")
-    check(app.ui.city_detail_tabs.get_tab_count() == 2, "city administration separates overview and allocation into stable tabs")
+    check(app.ui.city_detail_tabs.get_tab_count() == 3, "city administration separates overview, allocation, and tile management into stable tabs")
+    check(app.tile_city_panel != null and app.tile_city_panel.managed_tile_button_count()>=4, "tile tab renders every managed city tile as an individual control")
+    check("관리 타일" in app.tile_city_panel.summary_label.text and "건설력" in app.tile_city_panel.summary_label.text, "tile tab summarizes yields, households, resources, and construction capacity")
+    var work_tile:=Vector2i(-1,-1)
+    for tile_record in app.tile_territory.managed_tiles(app.tile_city_id):
+        if String(tile_record.get("settlement_id","")).is_empty():
+            work_tile=Vector2i(int(tile_record.get("column",-1)),int(tile_record.get("row",-1)))
+            break
+    app.tile_city_panel.select_tile(work_tile)
+    app.tile_city_panel.assign_or_release_selected_household()
+    check(bool(app.tile_territory.tile_state(app._game_map().world_map,work_tile).get("worked",false)), "tile tab assigns one idle household to a selected non-center tile")
+    app.tile_city_panel.queue_selected_facility_upgrade()
+    check(app.tile_territory.city_construction_status(app.tile_city_id).get("queue",[]).size()==1, "tile tab routes facility upgrades through the owning city's queue")
     check(FileAccess.file_exists("res://assets/ui/city_admin/population.svg") and FileAccess.file_exists("res://assets/ui/city_admin/security.svg"), "city administration indicators use replaceable UI assets")
     check(app.city_detail_preview.view_mode == "three_quarter" and app.city_detail_preview.construction_stage == 3, "city detail preserves the completed three-quarter visual")
     check(app.city_detail_preview.visual_asset_key() == "palisade", "city detail and central map share the same completed three-quarter asset")
@@ -166,15 +183,19 @@ func _run() -> void:
     check(String(saved_campaign.get("founded_city_name",""))=="새국내" and int(saved_campaign.get("first_construction_stage",0))==3, "autosave metadata contains the founded city and completed construction")
     check(String(saved_campaign.get("settler_outcome",""))=="selective" and String(saved_campaign.get("first_priority_project_id",""))=="irrigation", "autosave metadata contains settler and operating-project decisions")
     check(int(saved_campaign.get("city_management",{}).get("labor",0))==50 and saved_campaign.get("logs",[]).size()>0, "autosave metadata contains administration allocation and annal history")
+    check(String(saved_campaign.get("tile_city_id",""))!="" and saved_campaign.get("tile_territory",{}).get("settlements",{}).size()==1, "autosave persists the authoritative city and tile-management snapshot")
     var saved_log_count:int=app.logs.size()
     app.founded_city_name=""; app.first_construction_id=""; app.first_construction_stage=0; app.settler_outcome=""; app.first_priority_project_id=""; app.city_households=0
     app.city_food_reserve=0; app.city_food_capacity=1; app.city_management={"labor":100,"food":0,"guard":0}; app.logs.clear(); app._game_map().set_settlement_markers([])
+    app.tile_territory.reset(); app.tile_city_id=""
     app._load_game()
     await process_frame
     await process_frame
     check(app.founded_city_name=="새국내" and app.first_construction_id=="palisade" and app.first_construction_stage==3, "load-game restores the founded city and construction state")
     check(app.settler_outcome=="selective" and app.first_priority_project_id=="irrigation" and app.city_households==18, "load-game restores settler and operating-project state")
     check(int(app.city_management.labor)==50 and app.city_food_capacity==120 and app.city_food_reserve==98, "load-game restores city administration resources and allocation")
+    check(app.tile_city_id!="" and app.tile_territory.households(app.tile_city_id).size()==18, "load-game restores the city core and its household pool")
+    check(app.tile_territory.city_construction_status(app.tile_city_id).get("queue",[]).size()==1 and app.tile_territory.worked_tiles(app.tile_city_id).size()==2, "load-game restores queued upgrades and individual worked tiles")
     check(app.logs.size()==saved_log_count and app._game_map().settlement_markers.size()==1, "load-game restores annal history and the central-map city marker")
     if app._game_map().settlement_markers.size()>0:
         check(String(app._game_map().settlement_markers[0].name)=="새국내" and int(app._game_map().settlement_markers[0].households)==18, "restored map marker preserves city identity and population")
