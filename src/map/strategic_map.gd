@@ -70,6 +70,16 @@ var notification_markers: Array[Dictionary] = []
 var _last_zoom_tier := ""
 const PICK_BUCKET_SIZE := 160.0
 const ZOOM_TIERS := {"strategy": 0.18, "region": 0.68, "close": 1.65}
+const PLAY_AREA_TILES := Vector2(172.0, 118.0)
+const PLAY_AREA_MIN_ZOOM := 0.30
+const PLAY_AREA_MAX_ZOOM := 0.78
+const CITY_ROUTE_PAIRS := [
+    ["pyongyang", "gaeseong"], ["gaeseong", "seoul"], ["seoul", "incheon"],
+    ["seoul", "suwon"], ["seoul", "chuncheon"], ["chuncheon", "gangneung"],
+    ["suwon", "cheongju"], ["cheongju", "daejeon"], ["daejeon", "jeonju"],
+    ["jeonju", "gwangju"], ["gwangju", "mokpo"], ["daejeon", "daegu"],
+    ["daegu", "gyeongju"], ["gyeongju", "busan"], ["gyeongju", "pohang"]
+]
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
@@ -133,6 +143,15 @@ func set_peace_demands(ids: Array[int]) -> void:
 func frame_world() -> void:
     if size.x <= 1.0 or size.y <= 1.0:
         return
+    if world_map != null:
+        var play_area := PLAY_AREA_TILES * world_map.tile_size
+        var target_zoom := minf(size.x / maxf(play_area.x, 1.0), size.y / maxf(play_area.y, 1.0))
+        zoom = clampf(target_zoom, maxf(min_zoom, PLAY_AREA_MIN_ZOOM), PLAY_AREA_MAX_ZOOM)
+        pan = size * 0.5 - _preferred_world_focus() * zoom
+        _clamp_pan()
+        _emit_camera_state()
+        queue_redraw()
+        return
     var zx := size.x / maxf(_world_rect.size.x + 120.0, 1.0)
     var zy := size.y / maxf(_world_rect.size.y + 120.0, 1.0)
     zoom = clampf(minf(zx, zy), min_zoom, 1.8)
@@ -140,6 +159,12 @@ func frame_world() -> void:
     _clamp_pan()
     queue_redraw()
 
+func _preferred_world_focus() -> Vector2:
+    var country: Dictionary = countries.get(player_country_id, {})
+    var capital_id := int(country.get("capital_province", -1))
+    if provinces.has(capital_id):
+        return _province_center(provinces[capital_id])
+    return world_map.world_from_lonlat(127.25, 37.55)
 func focus_province(province_id: int) -> void:
     var province: Dictionary = provinces.get(province_id, {})
     if province.is_empty():
@@ -430,6 +455,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         _draw_world_selection(world_view)
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
+    _draw_city_routes()
     _draw_world_labels()
     if show_region_ids:
         _draw_region_ids()
@@ -475,23 +501,72 @@ func _draw_world_labels() -> void:
 
 func _draw_cities() -> void:
     var font := ThemeDB.fallback_font
+    var ordered_cities: Array = []
     for city_value in world_map.cities:
-        if city_value is not Dictionary:
-            continue
-        var city: Dictionary = city_value
+        if city_value is Dictionary:
+            ordered_cities.append(city_value)
+    ordered_cities.sort_custom(func(a, b): return float(a.get("mapY", 0.0)) < float(b.get("mapY", 0.0)))
+    for city in ordered_cities:
         if not bool(city.get("enabled", true)) or not bool(city.get("inBounds", false)):
             continue
         var major := String(city.get("type", "")) == "major_city"
         var tier := semantic_zoom_tier()
         if tier == "strategy" and not major:
             continue
+        if zoom < 0.62 and not major:
+            continue
         var position := Vector2(float(city.get("mapX", 0.0)), float(city.get("mapY", 0.0))) * world_map.tile_size
-        var radius := (4.0 if major else 2.6) / zoom
-        draw_circle(position, radius, Color("#f4d58a"))
-        draw_arc(position, radius, 0.0, TAU, 12, Color("#1c1e1f"), 1.2 / zoom)
+        _draw_city_settlement(position, major, String(city.get("type", "")))
         if tier != "strategy":
             var city_font_size := clampi(roundi(12.0 / zoom), 2, 28)
-            draw_string(font, position + Vector2(6.0 / zoom, -3.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+            draw_string(font, position + Vector2(11.0 / zoom, -8.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+
+func _draw_city_routes() -> void:
+    if world_map == null or zoom < 0.28:
+        return
+    var city_positions: Dictionary = {}
+    for city_value in world_map.cities:
+        if city_value is Dictionary and bool(city_value.get("enabled", true)) and bool(city_value.get("inBounds", false)):
+            city_positions[String(city_value.get("id", ""))] = Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+    for pair in CITY_ROUTE_PAIRS:
+        var start_id := String(pair[0])
+        var finish_id := String(pair[1])
+        if not city_positions.has(start_id) or not city_positions.has(finish_id):
+            continue
+        var start: Vector2 = city_positions[start_id]
+        var finish: Vector2 = city_positions[finish_id]
+        draw_line(start + Vector2(1.8 / zoom, 2.8 / zoom), finish + Vector2(1.8 / zoom, 2.8 / zoom), Color(0.08, 0.12, 0.10, 0.32), 5.0 / zoom, true)
+        draw_line(start, finish, Color(0.70, 0.56, 0.32, 0.68), 2.0 / zoom, true)
+
+func _draw_city_settlement(position: Vector2, major: bool, city_type: String) -> void:
+    var radius := (8.0 if major else 5.0) / zoom
+    var shadow_offset := Vector2(3.8 / zoom, 5.1 / zoom)
+    _draw_ground_ellipse(position + shadow_offset, Vector2(radius * 1.9, radius * 0.66), Color(0.02, 0.04, 0.03, 0.42))
+    var base := PackedVector2Array([
+        position + Vector2(-radius * 1.25, 0.0), position + Vector2(0.0, radius * 0.62),
+        position + Vector2(radius * 1.25, 0.0), position + Vector2(0.0, -radius * 0.62)
+    ])
+    draw_colored_polygon(base, Color("#a7966b") if major else Color("#8d865f"))
+    var height := radius * (1.9 if major else 1.45)
+    var wall := PackedVector2Array([
+        position + Vector2(-radius * 0.68, 0.0), position + Vector2(radius * 0.68, 0.0),
+        position + Vector2(radius * 0.68, -height * 0.62), position + Vector2(-radius * 0.68, -height * 0.62)
+    ])
+    draw_colored_polygon(wall, Color("#d1bf8a") if major else Color("#b4a878"))
+    var roof := PackedVector2Array([
+        position + Vector2(-radius * 0.95, -height * 0.61), position + Vector2(0.0, -height),
+        position + Vector2(radius * 0.95, -height * 0.61), position + Vector2(0.0, -height * 0.26)
+    ])
+    draw_colored_polygon(roof, Color("#934f3d") if major else Color("#714438"))
+    if city_type == "port":
+        draw_line(position + Vector2(radius * 1.15, radius * 0.28), position + Vector2(radius * 2.2, radius * 0.75), Color("#c5b784"), 1.1 / zoom, true)
+
+func _draw_ground_ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
+    var points := PackedVector2Array()
+    for point_index in range(16):
+        var angle := TAU * float(point_index) / 16.0
+        points.append(center + Vector2(cos(angle) * radius.x, sin(angle) * radius.y))
+    draw_colored_polygon(points, color)
 
 func _draw_notification_markers() -> void:
     for marker in notification_markers:
@@ -566,11 +641,11 @@ func _draw_hex_tiles(numeric_range: Vector2) -> void:
         var variation := int((int(tile.get("column", 0)) + int(tile.get("row", 0)) * 3) % 5) - 2
         fill = fill.lightened(float(variation) * 0.018) if variation > 0 else fill.darkened(float(-variation) * 0.018)
         draw_colored_polygon(polygon, fill)
-        var border := Color("#285568") if is_water else Color(0.08, 0.11, 0.12, 0.58)
-        var width := 0.65 / zoom
+        var border := Color(0.08, 0.11, 0.12, 0.14)
+        var width := 0.4 / zoom
         if not is_water and bool(tile.get("boundary", false)):
-            border = Color("#1b2224")
-            width = 1.35 / zoom
+            border = Color(0.08, 0.11, 0.12, 0.26)
+            width = 0.72 / zoom
         if not is_water and (province_id in selected_province_ids or province_id == selected_province_id):
             border = Color("#f4d58a")
             width = 2.5 / zoom

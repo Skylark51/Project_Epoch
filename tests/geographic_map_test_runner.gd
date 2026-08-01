@@ -17,7 +17,10 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_expect(map.world_map != null, "전략 지도에 실제 지리 월드맵 모듈이 연결되어야 한다.")
-	_expect(map.zoom < 0.32, "전체 지도 프레이밍은 저해상도 전체보기 LOD를 사용해야 한다.")
+	var terrain_chunk := map.world_map.chunk_texture(26, 14, "terrain", {}, {})
+	var terrain_image := terrain_chunk.get_image()
+	_expect(terrain_image.get_width() == map.world_map.chunk_size * 3 and terrain_image.get_height() == map.world_map.chunk_size * 3, "terrain chunks contain micro surface detail.")
+	_expect(map.zoom >= 0.30 and map.zoom <= 0.78, "default frame keeps a readable central play area.")
 	_expect(map.visible_chunk_count > 0, "전체보기에서도 가시 청크 범위를 계산해야 한다.")
 
 	map.go_to_lonlat(126.9780, 37.5665, 1.2)

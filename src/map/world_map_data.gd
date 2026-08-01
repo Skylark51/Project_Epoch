@@ -11,6 +11,13 @@ const TERRAIN_COLORS := {
 	12: Color("#3b7b99"), 13: Color("#2f6987")
 }
 
+# Chunks remain compact, but each logical tile receives a small surface patch.
+# That keeps the public tile/world coordinate system intact while preventing
+# the map from reading as a field of enlarged single-color squares.
+const SURFACE_PIXELS_PER_TILE := 3
+const WATER_TERRAIN_IDS := [0, 1, 2, 12, 13]
+const TEXTURED_LAND_TERRAIN_IDS := [3, 4, 5, 6, 7, 8, 9, 10, 11]
+
 var manifest: Dictionary = {}
 var projection := MapProjection.new()
 var width := 0
@@ -106,19 +113,80 @@ func chunk_texture(chunk_x: int, chunk_y: int, mode: String, countries: Dictiona
 	var key := "%s:%d:%d" % [mode, chunk_x, chunk_y]
 	if _chunk_texture_cache.has(key):
 		return _chunk_texture_cache[key]
-	var image := Image.create_empty(chunk_size, chunk_size, false, Image.FORMAT_RGBA8)
+	var texture_size := chunk_size * SURFACE_PIXELS_PER_TILE
+	var image := Image.create_empty(texture_size, texture_size, false, Image.FORMAT_RGBA8)
 	for local_y in range(chunk_size):
 		for local_x in range(chunk_size):
 			var column := chunk_x * chunk_size + local_x
 			var row := chunk_y * chunk_size + local_y
 			var color := Color("#0c1821")
+			var index := -1
 			if contains(column, row):
-				var index := row * width + column
+				index = row * width + column
 				color = _cell_color(index, mode, countries, provinces, player_country_id, relations, wars)
-			image.set_pixel(local_x, local_y, color)
+			_paint_surface_cell(image, local_x, local_y, column, row, index, color, mode)
 	var texture := ImageTexture.create_from_image(image)
 	_chunk_texture_cache[key] = texture
 	return texture
+
+func _paint_surface_cell(image: Image, local_x: int, local_y: int, column: int, row: int, index: int, base_color: Color, mode: String) -> void:
+	var origin := Vector2i(local_x * SURFACE_PIXELS_PER_TILE, local_y * SURFACE_PIXELS_PER_TILE)
+	for pixel_y in range(SURFACE_PIXELS_PER_TILE):
+		for pixel_x in range(SURFACE_PIXELS_PER_TILE):
+			var color := base_color
+			if index >= 0:
+				color = _surface_color(column, row, index, pixel_x, pixel_y, base_color, mode)
+			image.set_pixel(origin.x + pixel_x, origin.y + pixel_y, color)
+
+func _surface_color(column: int, row: int, index: int, pixel_x: int, pixel_y: int, base_color: Color, mode: String) -> Color:
+	var terrain_id_value := int(terrain[index])
+	var texture_x := column * SURFACE_PIXELS_PER_TILE + pixel_x
+	var texture_y := row * SURFACE_PIXELS_PER_TILE + pixel_y
+	var variation := _surface_noise(texture_x, texture_y, terrain_id_value) - 0.5
+	var amplitude := 0.014 if terrain_id_value in WATER_TERRAIN_IDS else 0.034
+	if mode == "terrain":
+		amplitude += 0.012
+	var color := base_color.lightened(variation * amplitude * 2.0) if variation >= 0.0 else base_color.darkened(-variation * amplitude * 2.0)
+
+	# A fine, deterministic ground texture gives plains and woodland some life
+	# without adding repeated sprite patterns or a per-frame cost.
+	if terrain_id_value in TEXTURED_LAND_TERRAIN_IDS:
+		var fleck := _surface_noise(texture_x * 7, texture_y * 11, terrain_id_value + 17)
+		if fleck > 0.87:
+			color = color.darkened(0.035 + (fleck - 0.87) * 0.18)
+		elif fleck < 0.045:
+			color = color.lightened(0.025)
+
+	var shoreline := _shoreline_factor(column, row, pixel_x, pixel_y, terrain_id_value)
+	if shoreline > 0.0:
+		if terrain_id_value in WATER_TERRAIN_IDS:
+			color = color.lerp(Color("#87a9a5"), 0.18 * shoreline)
+		else:
+			color = color.lerp(Color("#b8ab73"), 0.25 * shoreline)
+	return color
+
+func _shoreline_factor(column: int, row: int, pixel_x: int, pixel_y: int, terrain_id_value: int) -> float:
+	var water := terrain_id_value in WATER_TERRAIN_IDS
+	var factor := 0.0
+	if pixel_x == 0 and _terrain_changes_water_state(column - 1, row, water):
+		factor = 1.0
+	if pixel_x == SURFACE_PIXELS_PER_TILE - 1 and _terrain_changes_water_state(column + 1, row, water):
+		factor = maxf(factor, 1.0)
+	if pixel_y == 0 and _terrain_changes_water_state(column, row - 1, water):
+		factor = maxf(factor, 1.0)
+	if pixel_y == SURFACE_PIXELS_PER_TILE - 1 and _terrain_changes_water_state(column, row + 1, water):
+		factor = maxf(factor, 1.0)
+	return factor
+
+func _terrain_changes_water_state(column: int, row: int, current_is_water: bool) -> bool:
+	if not contains(column, row):
+		return false
+	return (int(terrain[row * width + column]) in WATER_TERRAIN_IDS) != current_is_water
+
+func _surface_noise(x: int, y: int, salt: int) -> float:
+	var hash_value := x * 374761393 + y * 668265263 + salt * 1442695041
+	hash_value = (hash_value ^ (hash_value >> 13)) * 1274126177
+	return float(hash_value & 0x7fffffff) / 2147483647.0
 
 func overview_texture_for_mode(mode: String, countries: Dictionary, provinces: Dictionary, player_country_id := "", relations := {}, wars := []) -> Texture2D:
 	if mode == "terrain" and overview_texture != null:
