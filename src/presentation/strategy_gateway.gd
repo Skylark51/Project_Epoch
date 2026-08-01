@@ -229,7 +229,7 @@ func _sync_from_core() -> void:
 
 func _presentation_snapshot(core: Dictionary) -> Dictionary:
     var result := {
-        "countries": {}, "provinces": {}, "armies": {}, "relations": core.get("relations", {}).duplicate(true),
+        "countries": {}, "provinces": {}, "armies": {}, "army_groups": [], "relations": core.get("relations", {}).duplicate(true),
         "wars": [], "scenario_id": String(core.get("scenario_id", "")), "player_country_id": String(core.get("player_country_id", "")),
         "date": core.get("date", {}).duplicate(true), "turn": int(core.get("turn", 1)),
         "map_tiles": [], "map_labels": []
@@ -272,6 +272,13 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
     for army in core.get("armies", {}).values():
         var province_id := int(army.get("province_id", -1))
         result.armies[province_id] = int(result.armies.get(province_id, 0)) + int(army.get("soldiers", 0))
+        var visual_group: Dictionary = army.duplicate(true)
+        visual_group["id"] = String(army.get("id", army.get("army_id", "army_%d" % result.army_groups.size())))
+        visual_group["army_id"] = String(army.get("army_id", visual_group.id))
+        visual_group["province_id"] = province_id
+        visual_group["owner_id"] = String(army.get("owner_id", ""))
+        visual_group["soldiers"] = int(army.get("soldiers", 0))
+        result.army_groups.append(visual_group)
     for war in core.get("wars", {}).values():
         var attackers: Array = war.get("attackers", [])
         var defenders: Array = war.get("defenders", [])
