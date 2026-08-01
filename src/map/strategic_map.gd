@@ -17,6 +17,7 @@ const MODE_LABELS := {
     "revolt": "반란 위험", "terrain": "지형", "fort": "요새", "supply": "보급"
 }
 const WorldMapDataScript = preload("res://src/map/world_map_data.gd")
+const BattlefieldUnitRendererScript = preload("res://src/map/battlefield_unit_renderer.gd")
 
 const TERRAIN_COLORS := {
     "plains": Color("#7d8a63"), "hills": Color("#81725b"), "forest": Color("#4f6c55"),
@@ -30,6 +31,8 @@ var world_map: WorldMapData
 var world_map_id := ""
 var countries: Dictionary = {}
 var armies: Dictionary = {}
+var army_groups: Array = []
+var show_battlefield_units := false
 var relations: Dictionary = {}
 var wars: Array = []
 var player_country_id := ""
@@ -65,6 +68,7 @@ var show_coast_highlight := false
 var show_region_ids := false
 var visible_chunk_count := 0
 var last_rendered_tile_count := 0
+var _battlefield_unit_renderer = BattlefieldUnitRendererScript.new()
 const PICK_BUCKET_SIZE := 160.0
 
 func _ready() -> void:
@@ -79,6 +83,7 @@ func set_snapshot(snapshot: Dictionary) -> void:
     map_labels = snapshot.get("map_labels", []).duplicate(true)
     countries = snapshot.get("countries", {}).duplicate(true)
     armies = snapshot.get("armies", {}).duplicate(true)
+    army_groups = snapshot.get("army_groups", []).duplicate(true)
     relations = snapshot.get("relations", {}).duplicate(true)
     wars = snapshot.get("wars", []).duplicate(true)
     player_country_id = String(snapshot.get("player_country_id", ""))
@@ -277,6 +282,12 @@ func _clamp_pan() -> void:
 func _screen_to_world(point: Vector2) -> Vector2:
     return (point - pan) / zoom
 
+func world_to_screen(world_position: Vector2) -> Vector2:
+    return world_position * zoom + pan
+
+func battlefield_render_stats() -> Dictionary:
+    return _battlefield_unit_renderer.stats()
+
 func _city_at(screen_point: Vector2) -> String:
     if world_map == null:
         return ""
@@ -375,6 +386,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
     _draw_world_labels()
+    _draw_battlefield_units()
     if show_region_ids:
         _draw_region_ids()
     _draw_cities()
@@ -537,6 +549,7 @@ func _draw_grid() -> void:
         draw_line(Vector2(start_x, y), Vector2(end_x, y), Color(0.20, 0.28, 0.33, 0.18), 1.0 / zoom)
 
 func _draw_icons_and_labels() -> void:
+    var label_min_zoom := 1.15 if show_battlefield_units else 0.72
     for id_value in provinces.keys():
         var id := int(id_value)
         var province: Dictionary = provinces[id]
@@ -548,18 +561,22 @@ func _draw_icons_and_labels() -> void:
         if int(province.get("fort", 0)) > 0 and zoom >= 0.78:
             draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#c5b28a"), true)
             draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#3a3028"), false, 1.5 / zoom)
-        if zoom >= 0.72:
+        if zoom >= label_min_zoom:
             var label := String(province.get("name", "Province"))
             var font := ThemeDB.fallback_font
             var font_size := 14 if zoom >= 1.35 else 11
             var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
             draw_string(font, center - Vector2(text_size.x * 0.5, 0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color("#f2ead8"))
-        if zoom >= 0.58:
+        if zoom >= 0.58 and not show_battlefield_units:
             var amount := int(armies.get(id, province.get("army", 0)))
             var badge := Rect2(center + Vector2(-17, 8), Vector2(34, 20))
             draw_style_box(_badge_style(), badge)
             draw_string(ThemeDB.fallback_font, badge.position + Vector2(7, 15), str(amount), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
 
+func _draw_battlefield_units() -> void:
+    if not show_battlefield_units or world_map == null:
+        return
+    _battlefield_unit_renderer.render(self, army_groups, provinces, countries, world_map, zoom, army_groups.is_empty())
 func _draw_command_paths() -> void:
     for path in _command_paths:
         var from_id := int(path.get("from_id", -1))
