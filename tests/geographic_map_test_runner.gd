@@ -29,7 +29,8 @@ func _run() -> void:
 	_expect(map.visible_chunk_count > 0 and map.visible_chunk_count < 1200, "확대 시 카메라 주변 청크만 렌더링해야 한다.")
 	_expect(map.last_rendered_tile_count < 307200, "확대 시 307,200개 전체 타일을 매 프레임 그리지 않아야 한다.")
 	var seoul_world := map.world_map.world_from_lonlat(126.9780, 37.5665)
-	var seoul_screen := seoul_world * map.zoom + map.pan
+	var seoul_screen := map.world_to_screen(seoul_world)
+	_expect(map.screen_to_world(seoul_screen).distance_to(seoul_world) < 0.01, "3/4 projection preserves a reversible world-to-screen transform.")
 	_expect(map.call("_province_at", seoul_screen) != -1, "서울 실제 좌표에서 기존 전략 프로빈스를 선택할 수 있어야 한다.")
 	_expect(String(map.call("_city_at", seoul_screen)) == "seoul", "서울 도시 마커가 실제 좌표에서 클릭되어야 한다.")
 	var islands := [

@@ -81,11 +81,75 @@ const CITY_ROUTE_PAIRS := [
     ["daegu", "gyeongju"], ["gyeongju", "busan"], ["gyeongju", "pohang"]
 ]
 
+# A reversible 2:1 dimetric (3/4) projection. World data stays in its existing
+# geographic coordinate space; all camera and picking paths use this same basis.
+const ISO_HORIZONTAL := 0.72
+const ISO_VERTICAL := 0.36
+
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
     focus_mode = Control.FOCUS_ALL
     clip_contents = true
     resized.connect(_clamp_pan)
+
+func world_to_screen(world_position: Vector2) -> Vector2:
+    return pan + _project_world_point(world_position) * zoom
+
+func screen_to_world(screen_position: Vector2) -> Vector2:
+    var projected := (screen_position - pan) / maxf(zoom, 0.0001)
+    return _unproject_world_point(projected)
+
+func _project_world_point(world_position: Vector2) -> Vector2:
+    return Vector2(
+        (world_position.x - world_position.y) * ISO_HORIZONTAL,
+        (world_position.x + world_position.y) * ISO_VERTICAL
+    )
+
+func _unproject_world_point(projected_position: Vector2) -> Vector2:
+    return Vector2(
+        (projected_position.x / ISO_HORIZONTAL + projected_position.y / ISO_VERTICAL) * 0.5,
+        (-projected_position.x / ISO_HORIZONTAL + projected_position.y / ISO_VERTICAL) * 0.5
+    )
+
+func _world_draw_transform() -> Transform2D:
+    return Transform2D(
+        Vector2(ISO_HORIZONTAL * zoom, ISO_VERTICAL * zoom),
+        Vector2(-ISO_HORIZONTAL * zoom, ISO_VERTICAL * zoom),
+        pan
+    )
+
+func _projected_bounds_for_rect(world_rect: Rect2) -> Rect2:
+    var corners: Array[Vector2] = [
+        world_rect.position,
+        Vector2(world_rect.end.x, world_rect.position.y),
+        world_rect.end,
+        Vector2(world_rect.position.x, world_rect.end.y)
+    ]
+    var minimum: Vector2 = _project_world_point(corners[0])
+    var maximum: Vector2 = minimum
+    for corner: Vector2 in corners:
+        var projected: Vector2 = _project_world_point(corner)
+        minimum = Vector2(minf(minimum.x, projected.x), minf(minimum.y, projected.y))
+        maximum = Vector2(maxf(maximum.x, projected.x), maxf(maximum.y, projected.y))
+    return Rect2(minimum, maximum - minimum)
+
+func _visible_world_bounds() -> Rect2:
+    var corners: Array[Vector2] = [
+        screen_to_world(Vector2.ZERO),
+        screen_to_world(Vector2(size.x, 0.0)),
+        screen_to_world(size),
+        screen_to_world(Vector2(0.0, size.y))
+    ]
+    var minimum: Vector2 = corners[0]
+    var maximum: Vector2 = minimum
+    for corner: Vector2 in corners:
+        minimum = Vector2(minf(minimum.x, corner.x), minf(minimum.y, corner.y))
+        maximum = Vector2(maxf(maximum.x, corner.x), maxf(maximum.y, corner.y))
+    var grow_amount: float = world_map.tile_size * 2.0 if world_map != null else 16.0
+    return Rect2(minimum, maximum - minimum).grow(grow_amount)
+
+func _center_world(world_position: Vector2) -> void:
+    pan = size * 0.5 - _project_world_point(world_position) * zoom
 
 func set_snapshot(snapshot: Dictionary) -> void:
     provinces = snapshot.get("provinces", {}).duplicate(true)
@@ -145,18 +209,25 @@ func frame_world() -> void:
         return
     if world_map != null:
         var play_area := PLAY_AREA_TILES * world_map.tile_size
-        var target_zoom := minf(size.x / maxf(play_area.x, 1.0), size.y / maxf(play_area.y, 1.0))
+        var focus := _preferred_world_focus()
+        var projected_play_area := _projected_bounds_for_rect(Rect2(focus - play_area * 0.5, play_area))
+        var target_zoom := minf(
+            size.x / maxf(projected_play_area.size.x, 1.0),
+            size.y / maxf(projected_play_area.size.y, 1.0)
+        )
         zoom = clampf(target_zoom, maxf(min_zoom, PLAY_AREA_MIN_ZOOM), PLAY_AREA_MAX_ZOOM)
-        pan = size * 0.5 - _preferred_world_focus() * zoom
+        _center_world(focus)
         _clamp_pan()
         _emit_camera_state()
         queue_redraw()
         return
-    var zx := size.x / maxf(_world_rect.size.x + 120.0, 1.0)
-    var zy := size.y / maxf(_world_rect.size.y + 120.0, 1.0)
+    var projected_world := _projected_bounds_for_rect(_world_rect)
+    var zx := size.x / maxf(projected_world.size.x + 120.0, 1.0)
+    var zy := size.y / maxf(projected_world.size.y + 120.0, 1.0)
     zoom = clampf(minf(zx, zy), min_zoom, 1.8)
-    pan = size * 0.5 - (_world_rect.position + _world_rect.size * 0.5) * zoom
+    _center_world(_world_rect.get_center())
     _clamp_pan()
+    _emit_camera_state()
     queue_redraw()
 
 func _preferred_world_focus() -> Vector2:
@@ -169,8 +240,7 @@ func focus_province(province_id: int) -> void:
     var province: Dictionary = provinces.get(province_id, {})
     if province.is_empty():
         return
-    var center := _province_center(province)
-    pan = size * 0.5 - center * zoom
+    _center_world(_province_center(province))
     _clamp_pan()
     queue_redraw()
 
@@ -180,7 +250,7 @@ func focus_city(city_id: String) -> bool:
     for city_value in world_map.cities:
         if city_value is Dictionary and String(city_value.get("id", "")) == city_id:
             var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
-            pan = size * 0.5 - position * zoom
+            _center_world(position)
             _clamp_pan()
             queue_redraw()
             return true
@@ -197,9 +267,9 @@ func set_zoom_level(value: float, screen_point := Vector2(-1, -1)) -> void:
     var anchor := screen_point
     if anchor.x < 0.0 or anchor.y < 0.0:
         anchor = size * 0.5
-    var before := (anchor - pan) / zoom
+    var before := screen_to_world(anchor)
     zoom = clampf(value, min_zoom, max_zoom)
-    pan = anchor - before * zoom
+    pan = anchor - _project_world_point(before) * zoom
     _clamp_pan()
     _emit_camera_state()
     queue_redraw()
@@ -214,7 +284,7 @@ func semantic_zoom_tier() -> String:
 func center_from_minimap(normalized_position: Vector2) -> void:
     var normalized := normalized_position.clamp(Vector2.ZERO, Vector2.ONE)
     var center := _world_rect.position + _world_rect.size * normalized
-    pan = size * 0.5 - center * zoom
+    _center_world(center)
     _clamp_pan()
     queue_redraw()
 
@@ -299,20 +369,24 @@ func _gui_input(event: InputEvent) -> void:
                 _hovered_id = next_hover; tooltip_changed.emit(_tooltip_for(next_hover), motion.global_position); queue_redraw()
 
 func _finish_selection(position: Vector2) -> void:
-    _selection_current = position; _selection_dragging = false
+    _selection_current = position
+    _selection_dragging = false
     var next: Array[int] = []
-    if _selection_additive: next.assign(selected_province_ids)
+    if _selection_additive:
+        next.assign(selected_province_ids)
     if _selection_origin.distance_to(position) < 7.0:
         var id := _province_at(position)
         if id != -1:
-            if _selection_additive and id in next: next.erase(id)
-            elif id not in next: next.append(id)
+            if _selection_additive and id in next:
+                next.erase(id)
+            elif id not in next:
+                next.append(id)
     else:
         var rect := Rect2(_selection_origin, position - _selection_origin).abs()
         for id_value in provinces.keys():
             var id := int(id_value)
-            var screen_center := _province_center(provinces[id]) * zoom + pan
-            if rect.has_point(screen_center) and id not in next: next.append(id)
+            if rect.has_point(world_to_screen(_province_center(provinces[id]))) and id not in next:
+                next.append(id)
     set_selected_provinces(next)
 
 func set_selected_provinces(ids: Array[int]) -> void:
@@ -350,23 +424,30 @@ func _clamp_pan() -> void:
     if size.x <= 0.0 or size.y <= 0.0:
         return
     var margin := 90.0
-    var scaled_min := _world_rect.position * zoom
-    var scaled_max := _world_rect.end * zoom
-    pan.x = clampf(pan.x, size.x - scaled_max.x - margin, -scaled_min.x + margin)
-    pan.y = clampf(pan.y, size.y - scaled_max.y - margin, -scaled_min.y + margin)
+    var projected_bounds := _projected_bounds_for_rect(_world_rect)
+    var minimum := projected_bounds.position * zoom
+    var maximum := projected_bounds.end * zoom
+    var min_pan_x := size.x - maximum.x - margin
+    var max_pan_x := -minimum.x + margin
+    var min_pan_y := size.y - maximum.y - margin
+    var max_pan_y := -minimum.y + margin
+    pan.x = (min_pan_x + max_pan_x) * 0.5 if min_pan_x > max_pan_x else clampf(pan.x, min_pan_x, max_pan_x)
+    pan.y = (min_pan_y + max_pan_y) * 0.5 if min_pan_y > max_pan_y else clampf(pan.y, min_pan_y, max_pan_y)
 
 func _screen_to_world(point: Vector2) -> Vector2:
-    return (point - pan) / zoom
+    return screen_to_world(point)
 
 func _city_at(screen_point: Vector2) -> String:
     if world_map == null:
         return ""
-    var world_position := _screen_to_world(screen_point)
     for city_value in world_map.cities:
-        if city_value is Dictionary and bool(city_value.get("enabled", true)) and bool(city_value.get("inBounds", false)):
-            var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
-            if world_position.distance_to(position) <= 9.0 / zoom:
-                return String(city_value.get("id", ""))
+        if city_value is not Dictionary or not bool(city_value.get("enabled", true)) or not bool(city_value.get("inBounds", false)):
+            continue
+        var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+        var major := String(city_value.get("type", "")) == "major_city"
+        var hit_radius := 18.0 if major else 14.0
+        if screen_point.distance_to(world_to_screen(position)) <= hit_radius:
+            return String(city_value.get("id", ""))
     return ""
 
 func _province_at(screen_point: Vector2) -> int:
@@ -392,7 +473,7 @@ func _province_at(screen_point: Vector2) -> int:
     return -1
 func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, size), Color("#0c1821"))
-    draw_set_transform(pan, 0.0, Vector2(zoom, zoom))
+    draw_set_transform_matrix(_world_draw_transform())
     var numeric_range := _robust_range(_numeric_values(map_mode))
     if world_map != null:
         _draw_world_map(numeric_range)
@@ -401,10 +482,17 @@ func _draw() -> void:
         _draw_province_polygons(numeric_range)
     else:
         _draw_hex_tiles(numeric_range)
-        _draw_region_labels()
     _draw_command_paths()
-    _draw_icons_and_labels()
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    if world_map != null:
+        _draw_world_labels()
+        _draw_city_labels()
+        if show_region_ids:
+            _draw_region_ids()
+        _draw_notification_markers()
+    elif not map_tiles.is_empty():
+        _draw_region_labels()
+    _draw_icons_and_labels()
     if _selection_dragging:
         var selection_rect := Rect2(_selection_origin, _selection_current - _selection_origin).abs()
         draw_rect(selection_rect, Color(0.35, 0.78, 0.88, 0.16), true)
@@ -435,7 +523,7 @@ func _draw_province_polygons(numeric_range: Vector2) -> void:
             draw_polyline(polygon + PackedVector2Array([polygon[0]]), Color("#f0a25b"), 6.0 / zoom, true)
 
 func _draw_world_map(_numeric_range: Vector2) -> void:
-    var world_view := Rect2(_screen_to_world(Vector2.ZERO), size / zoom).grow(world_map.tile_size * 2.0)
+    var world_view := _visible_world_bounds()
     var chunks := world_map.visible_chunk_bounds(world_view)
     visible_chunk_count = chunks.size.x * chunks.size.y
     last_rendered_tile_count = visible_chunk_count * world_map.chunk_size * world_map.chunk_size
@@ -456,11 +544,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
     _draw_city_routes()
-    _draw_world_labels()
-    if show_region_ids:
-        _draw_region_ids()
     _draw_cities()
-    _draw_notification_markers()
 
 func _draw_world_selection(world_view: Rect2) -> void:
     if selected_province_ids.is_empty() and _hovered_id == -1:
@@ -486,26 +570,27 @@ func _draw_world_labels() -> void:
     if zoom < 0.16:
         return
     var labels := [
-        ["중국 대륙", 105.0, 37.0, false], ["한반도", 127.3, 38.2, false],
-        ["일본 열도", 137.8, 37.0, false], ["황해", 123.5, 35.0, true],
-        ["동해", 132.7, 40.0, true], ["동중국해", 125.0, 28.0, true]
+        ["?? ??", 105.0, 37.0, false], ["???", 127.3, 38.2, false],
+        ["?? ??", 137.8, 37.0, false], ["??", 123.5, 35.0, true],
+        ["??", 132.7, 40.0, true], ["????", 125.0, 28.0, true]
     ]
     var font := ThemeDB.fallback_font
+    var font_size := clampi(roundi(14.0 * clampf(zoom, 0.75, 1.2)), 10, 18)
     for label in labels:
-        var position := world_map.world_from_lonlat(float(label[1]), float(label[2]))
-        var font_size := clampi(roundi(18.0 / zoom), 6, 128)
+        var position := world_to_screen(world_map.world_from_lonlat(float(label[1]), float(label[2])))
         var text := String(label[0])
         var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
         var color := Color(0.60, 0.80, 0.88, 0.62) if bool(label[3]) else Color(0.94, 0.88, 0.68, 0.56)
         draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 func _draw_cities() -> void:
-    var font := ThemeDB.fallback_font
     var ordered_cities: Array = []
     for city_value in world_map.cities:
         if city_value is Dictionary:
             ordered_cities.append(city_value)
-    ordered_cities.sort_custom(func(a, b): return float(a.get("mapY", 0.0)) < float(b.get("mapY", 0.0)))
+    ordered_cities.sort_custom(func(a, b):
+        return float(a.get("mapX", 0.0)) + float(a.get("mapY", 0.0)) < float(b.get("mapX", 0.0)) + float(b.get("mapY", 0.0))
+    )
     for city in ordered_cities:
         if not bool(city.get("enabled", true)) or not bool(city.get("inBounds", false)):
             continue
@@ -517,9 +602,31 @@ func _draw_cities() -> void:
             continue
         var position := Vector2(float(city.get("mapX", 0.0)), float(city.get("mapY", 0.0))) * world_map.tile_size
         _draw_city_settlement(position, major, String(city.get("type", "")))
-        if tier != "strategy":
-            var city_font_size := clampi(roundi(12.0 / zoom), 2, 28)
-            draw_string(font, position + Vector2(11.0 / zoom, -8.0 / zoom), String(city.get("name", city.get("id", ""))), HORIZONTAL_ALIGNMENT_LEFT, -1, city_font_size, Color("#f2ead8"))
+
+func _draw_city_labels() -> void:
+    if world_map == null:
+        return
+    var font := ThemeDB.fallback_font
+    var tier := semantic_zoom_tier()
+    if tier == "strategy":
+        return
+    var font_size := clampi(roundi(11.0 * clampf(zoom, 0.82, 1.15)), 9, 13)
+    for city_value in world_map.cities:
+        if city_value is not Dictionary or not bool(city_value.get("enabled", true)) or not bool(city_value.get("inBounds", false)):
+            continue
+        var major := String(city_value.get("type", "")) == "major_city"
+        if zoom < 0.62 and not major:
+            continue
+        var position := Vector2(float(city_value.get("mapX", 0.0)), float(city_value.get("mapY", 0.0))) * world_map.tile_size
+        draw_string(
+            font,
+            world_to_screen(position) + Vector2(10.0, -9.0),
+            String(city_value.get("name", city_value.get("id", ""))),
+            HORIZONTAL_ALIGNMENT_LEFT,
+            -1,
+            font_size,
+            Color("#f2ead8")
+        )
 
 func _draw_city_routes() -> void:
     if world_map == null or zoom < 0.28:
@@ -586,19 +693,19 @@ func _draw_notification_markers() -> void:
                 found = true
         if not found:
             continue
+        var screen_position := world_to_screen(position)
         var color := Color("#f0cb72")
         if String(marker.get("severity", "")) in ["warning", "urgent", "decision_required"]:
             color = Color("#ef6f61")
-        var radius := 7.0 / zoom
-        draw_circle(position + Vector2(0, -11.0 / zoom), radius, color)
-        draw_string(ThemeDB.fallback_font, position + Vector2(-2.4 / zoom, -8.2 / zoom), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(roundi(11.0 / zoom), 3, 30), Color("#1a1512"))
+        draw_circle(screen_position + Vector2(0.0, -12.0), 7.0, color)
+        draw_string(ThemeDB.fallback_font, screen_position + Vector2(-2.4, -8.2), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#1a1512"))
 
 func _draw_region_ids() -> void:
     var anchors: Dictionary = world_map.manifest.get("province_anchors", {})
     for source_id in anchors.keys():
         var anchor: Dictionary = anchors[source_id]
         var position := Vector2(float(anchor.get("map_x", 0.0)), float(anchor.get("map_y", 0.0))) * world_map.tile_size
-        draw_string(ThemeDB.fallback_font, position, String(source_id), HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(roundi(10.0 / zoom), 2, 32), Color("#f4d58a"))
+        draw_string(ThemeDB.fallback_font, world_to_screen(position), String(source_id), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("#f4d58a"))
 
 func _draw_map_debug_overlay() -> void:
     var mouse_world := _screen_to_world(get_local_mouse_position())
@@ -618,8 +725,9 @@ func go_to_lonlat(longitude: float, latitude: float, target_zoom := 1.2) -> void
     if world_map == null:
         return
     zoom = clampf(target_zoom, min_zoom, max_zoom)
-    pan = size * 0.5 - world_map.world_from_lonlat(longitude, latitude) * zoom
+    _center_world(world_map.world_from_lonlat(longitude, latitude))
     _clamp_pan()
+    _emit_camera_state()
     queue_redraw()
 
 func export_world_map_png(path := "user://east_asia_world_map.png") -> Error:
@@ -682,7 +790,7 @@ func _draw_region_labels() -> void:
         var font_size := 19
         var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
         var color := Color(0.56, 0.76, 0.84, 0.55) if String(label.get("kind", "")) == "sea" else Color(0.91, 0.85, 0.69, 0.30)
-        draw_string(font, position - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+        draw_string(font, world_to_screen(position) - Vector2(text_size.x * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 func _draw_grid() -> void:
     var start_x := int(floor(_world_rect.position.x / 80.0)) * 80
@@ -698,25 +806,25 @@ func _draw_icons_and_labels() -> void:
     for id_value in provinces.keys():
         var id := int(id_value)
         var province: Dictionary = provinces[id]
-        var center := _province_center(province)
+        var center := world_to_screen(_province_center(province))
         var owner := String(province.get("owner", ""))
         var country: Dictionary = countries.get(owner, {})
         if int(country.get("capital_province", -1)) == id:
-            _draw_star(center + Vector2(0, -18), 7.0, Color("#f0c66b"))
+            _draw_star(center + Vector2(0.0, -18.0), 7.0, Color("#f0c66b"))
         if int(province.get("fort", 0)) > 0 and zoom >= 0.78:
-            draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#c5b28a"), true)
-            draw_rect(Rect2(center + Vector2(24, -12), Vector2(12, 12)), Color("#3a3028"), false, 1.5 / zoom)
+            draw_rect(Rect2(center + Vector2(24.0, -12.0), Vector2(12.0, 12.0)), Color("#c5b28a"), true)
+            draw_rect(Rect2(center + Vector2(24.0, -12.0), Vector2(12.0, 12.0)), Color("#3a3028"), false, 1.5)
         if zoom >= 0.72:
             var label := String(province.get("name", "Province"))
             var font := ThemeDB.fallback_font
             var font_size := 14 if zoom >= 1.35 else 11
             var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-            draw_string(font, center - Vector2(text_size.x * 0.5, 0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color("#f2ead8"))
+            draw_string(font, center - Vector2(text_size.x * 0.5, 0.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color("#f2ead8"))
         if zoom >= 0.58:
             var amount := int(armies.get(id, province.get("army", 0)))
-            var badge := Rect2(center + Vector2(-17, 8), Vector2(34, 20))
+            var badge := Rect2(center + Vector2(-17.0, 8.0), Vector2(34.0, 20.0))
             draw_style_box(_badge_style(), badge)
-            draw_string(ThemeDB.fallback_font, badge.position + Vector2(7, 15), str(amount), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
+            draw_string(ThemeDB.fallback_font, badge.position + Vector2(7.0, 15.0), str(amount), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
 
 func _draw_command_paths() -> void:
     for path in _command_paths:
