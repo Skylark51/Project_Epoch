@@ -86,25 +86,57 @@ static func button(
 ) -> Button:
     var node := Button.new()
     node.text = text
+    node.tooltip_text = text
     node.custom_minimum_size.y = minimum_height
+    node.focus_mode = Control.FOCUS_ALL
     node.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    node.pressed.connect(action)
+    node.add_theme_constant_override("outline_size", 1)
+    if action.is_valid():
+        node.pressed.connect(action)
 
-    match variant:
-        "primary":
-            node.add_theme_stylebox_override(
-                "normal",
-                style("#7a6139", "#d0b06a", 1, 6)
-            )
-        "danger":
-            node.add_theme_stylebox_override(
-                "normal",
-                style("#593337", "#b96864", 1, 6)
-            )
-        "list":
-            node.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    if variant == "list":
+        node.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    if variant == "disabled":
+        node.disabled = true
+    _apply_button_variant(node, variant)
 
     return node
+static func _apply_button_variant(node: Button, variant: String) -> void:
+    var palette: Dictionary = _button_palette(variant)
+    node.add_theme_stylebox_override("normal", _button_box(String(palette["normal"]), String(palette["border"])))
+    node.add_theme_stylebox_override("hover", _button_box(String(palette["hover"]), String(palette["accent"])))
+    node.add_theme_stylebox_override("pressed", _button_box(String(palette["pressed"]), String(palette["accent"])))
+    node.add_theme_stylebox_override("disabled", _button_box("#182126", "#354148"))
+    node.add_theme_stylebox_override("focus", _button_box(String(palette["normal"]), String(palette["accent"]), 2))
+    node.add_theme_color_override("font_color", Color("#d8d8ce"))
+    node.add_theme_color_override("font_hover_color", Color("#f0e3bd"))
+    node.add_theme_color_override("font_disabled_color", Color("#738087"))
+static func _button_palette(variant: String) -> Dictionary:
+    var palettes: Dictionary = {
+        "default": {"normal": "#162229", "hover": "#20333b", "pressed": "#10191e", "border": "#40515a", "accent": "#7a8e94"},
+        "primary": {"normal": "#594a2c", "hover": "#6b5934", "pressed": "#44391f", "border": "#a88b52", "accent": "#d2b66f"},
+        "warning": {"normal": "#57462d", "hover": "#6a5635", "pressed": "#41351f", "border": "#a98045", "accent": "#d1a65a"},
+        "danger": {"normal": "#4b2d31", "hover": "#633a3c", "pressed": "#351f23", "border": "#94565a", "accent": "#ca7772"},
+        "positive": {"normal": "#253f36", "hover": "#315348", "pressed": "#1b3029", "border": "#538775", "accent": "#82be9b"},
+        "selected": {"normal": "#28424a", "hover": "#34545d", "pressed": "#1b3339", "border": "#779ea3", "accent": "#c3b06f"},
+        "quiet": {"normal": "#10181d", "hover": "#1b2a30", "pressed": "#0b1216", "border": "#2f3d43", "accent": "#647b82"},
+    }
+    return Dictionary(palettes.get(variant, palettes["default"])).duplicate(true)
+static func _button_box(background: String, border: String, border_width: int = 1) -> StyleBoxFlat:
+    var box := StyleBoxFlat.new()
+    box.bg_color = Color(background)
+    box.border_color = Color(border)
+    box.set_border_width_all(border_width)
+    box.set_corner_radius_all(2)
+    box.content_margin_left = 10
+    box.content_margin_right = 10
+    box.content_margin_top = 6
+    box.content_margin_bottom = 6
+    return box
+static func panel_style(role: String = "default") -> StyleBoxFlat:
+    var palettes: Dictionary = {"default": ["#111a20", "#35434a"], "inset": ["#0b1216", "#2d3940"], "emphasis": ["#18242b", "#7b6841"]}
+    var selected: Array = palettes.get(role, palettes["default"])
+    return style(String(selected[0]), String(selected[1]), 1, 2)
 
 
 static func stat(caption: String, value: String) -> Label:
@@ -139,7 +171,7 @@ static func style(
     box.bg_color = Color(background)
     box.border_color = Color(border)
     box.set_border_width_all(border_width)
-    box.set_corner_radius_all(corner_radius)
+    box.set_corner_radius_all(mini(corner_radius, 3))
     box.content_margin_left = 12
     box.content_margin_right = 12
     box.content_margin_top = 10

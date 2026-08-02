@@ -25,6 +25,9 @@ const MAP_MODES := [
 ]
 
 const LOG_LIMIT := 120
+const TOP_BAR_DEFAULT := ["date", "treasury", "resources", "war", "urgent"]
+const TOP_BAR_OPTIONAL := ["population", "happiness", "stability", "administration", "legitimacy", "military", "revolt_cities"]
+const TOP_BAR_LABELS := {"date": "연도·계절", "treasury": "국고", "resources": "핵심 자원", "war": "전쟁", "urgent": "긴급", "population": "총인구", "happiness": "평균 행복", "stability": "평균 안정", "administration": "행정력", "legitimacy": "정통성", "military": "군사력", "revolt_cities": "반란 위험"}
 const ProjectEpochUiFactoryScript = preload(
     "res://src/ui/project_epoch_ui_factory.gd"
 )
@@ -52,6 +55,12 @@ var peace_demands: Array[int] = []
 var governor_enabled := false
 var map_mode_index := 0
 var logs: Array[Dictionary] = []
+var city_list_sort_key := "city_name"
+var city_list_filter_id := "all"
+var city_list_descending := false
+var last_emergency_notification_id := -1
+var pending_right_panel_width := -1
+var panel_width_save_queued := false
 
 
 # Constructed UI references --------------------------------------------------
@@ -94,6 +103,7 @@ func _connect_gateway_signals() -> void:
     gateway.integration_notice.connect(_on_integration_notice)
     gateway.turn_requested.connect(_on_turn_requested)
     gateway.turn_requested.connect(_before_turn)
+    gateway.notifications_changed.connect(_refresh_notification_center)
 
 
 func _load_initial_catalog() -> void:
@@ -133,7 +143,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
             else:
                 _cancel_mode()
         KEY_SPACE:
-            gateway.submit_turn()
+            _request_turn_end()
         KEY_M:
             _prepare_move("move")
         KEY_A:
@@ -177,7 +187,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _handle_joypad_button(event: InputEventJoypadButton) -> void:
     match event.button_index:
         JOY_BUTTON_START:
-            gateway.submit_turn()
+            _request_turn_end()
         JOY_BUTTON_BACK:
             _open_ai_assistant()
         JOY_BUTTON_X:
@@ -272,7 +282,10 @@ func _build_start() -> Control:
             58
         )
     )
-    box.add_child(_button("불러오기", _load_game))
+    var load_button := _button("불러오기", _load_game)
+    load_button.disabled = not FileAccess.file_exists(gateway.autosave_path)
+    load_button.tooltip_text = "불러올 자동 저장 파일이 없습니다." if load_button.disabled else "가장 최근 자동 저장을 불러옵니다."
+    box.add_child(load_button)
     box.add_child(_button("설정", _settings))
     box.add_child(_button("종료", func(): get_tree().quit()))
     box.add_child(
@@ -311,6 +324,7 @@ func _build_scenario() -> Control:
     var era := OptionButton.new()
     era.add_item("고대 동아시아 · 프로토타입")
     era.add_item("시대 확정 후 추가")
+    era.set_item_disabled(1, true)
     left.add_child(era)
 
     var region := OptionButton.new()
@@ -438,6 +452,8 @@ func _build_game() -> Control:
     var center_right := HSplitContainer.new()
     center_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     center_right.split_offset = 760
+    ui.center_right_split = center_right
+    center_right.dragged.connect(_on_right_panel_dragged)
     split.add_child(center_right)
 
     var center := VBoxContainer.new()
@@ -460,7 +476,10 @@ func _build_game() -> Control:
     map_panel.add_child(game_map)
 
     center.add_child(_bottom_panel())
-    center_right.add_child(_right_panel())
+    var right_panel := _right_panel()
+    right_panel.custom_minimum_size.x = 260
+    ui.right_panel = right_panel
+    center_right.add_child(right_panel)
     return root
 
 
@@ -527,33 +546,37 @@ func _top_bar() -> Control:
     row.add_child(title)
 
     var statistics := [
-        ["날짜", "date", "1000. 1. 1"],
+        ["연도·계절", "date", "1000. 1월"],
         ["국고", "treasury", "0"],
-        ["수입", "income", "+0"],
-        ["인력", "manpower", "0"],
-        ["안정도", "stability", "0"],
-        ["전쟁 피로", "exhaustion", "0%"]
+        ["핵심 자원", "resources", "—"],
+        ["전쟁", "war", "평화"],
+        ["긴급", "urgent", "0"],
+        ["총인구", "population", "0"],
+        ["평균 행복", "happiness", "0"],
+        ["평균 안정", "stability", "0"],
+        ["행정력", "administration", "0"],
+        ["정통성", "legitimacy", "0"],
+        ["군사력", "military", "0"],
+        ["반란 위험", "revolt_cities", "0"]
     ]
+    ui.top_bar_row = row
+    ui.top_bar_stat_entries = {}
     for statistic in statistics:
         var value := _stat(String(statistic[0]), String(statistic[2]))
-        ui[statistic[1]] = value
-        row.add_child(value.get_parent())
+        var statistic_id := String(statistic[1])
+        ui[statistic_id] = value
+        var statistic_box := value.get_parent()
+        ui.top_bar_stat_entries[statistic_id] = statistic_box
+        row.add_child(statistic_box)
 
     row.add_spacer(true)
 
-    var alerts_button := _button(
-        "알림 0",
-        func(): _bottom_tab(1)
-    )
+    var alerts_button := _button("알림 0", _open_notifications, "warning")
     ui.alert_button = alerts_button
     row.add_child(alerts_button)
-    row.add_child(
-        _button(
-            "턴 실행  Space",
-            gateway.submit_turn,
-            "primary"
-        )
-    )
+    row.add_child(_button("표시", _open_top_bar_settings, "quiet"))
+    row.add_child(_button("턴 실행  Space", _request_turn_end, "primary"))
+    _apply_top_bar_preferences()
     return panel
 
 
@@ -561,6 +584,7 @@ func _left_panel() -> Control:
     var tabs := TabContainer.new()
     tabs.custom_minimum_size.x = 230
     tabs.mouse_filter = Control.MOUSE_FILTER_STOP
+    ui.left_tabs = tabs
 
     var map_box := _section("지도 모드")
     map_box.name = "지도"
@@ -615,6 +639,16 @@ func _left_panel() -> Control:
         )
     )
     tabs.add_child(alerts)
+    var alert_scroll := ScrollContainer.new()
+    alert_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    alert_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    var notification_list := VBoxContainer.new()
+    notification_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    notification_list.add_theme_constant_override("separation", 4)
+    ui.notification_list = notification_list
+    alert_scroll.add_child(notification_list)
+    alerts.add_child(alert_scroll)
+    ui.notification_tab = alerts
 
     var management := _section("자동 관리")
     management.name = "관리"
@@ -642,6 +676,37 @@ func _left_panel() -> Control:
         )
     )
     tabs.add_child(management)
+    var cities := _section("도시 목록")
+    cities.name = "도시"
+    var city_controls := HBoxContainer.new()
+    city_controls.add_theme_constant_override("separation", 4)
+    cities.add_child(city_controls)
+    var city_filter := OptionButton.new()
+    for filter_value in [["all", "전체"], ["occupied", "점령"], ["risk", "위험"], ["direct", "직할"], ["delegated", "위임"], ["autonomous", "자율"], ["policy", "정책"]]:
+        city_filter.add_item(String(filter_value[1]))
+        city_filter.set_item_metadata(city_filter.item_count - 1, String(filter_value[0]))
+    city_filter.item_selected.connect(_set_city_list_filter)
+    ui.city_filter_option = city_filter
+    city_controls.add_child(city_filter)
+    var city_sort := OptionButton.new()
+    for sort_value in [["city_name", "도시명"], ["population", "인구"], ["economy", "경제"], ["happiness", "행복"], ["stability", "안정"], ["rebellion_risk", "반란"], ["occupation", "점령"], ["governance", "통치"], ["policy", "정책"]]:
+        city_sort.add_item(String(sort_value[1]))
+        city_sort.set_item_metadata(city_sort.item_count - 1, String(sort_value[0]))
+    city_sort.item_selected.connect(_set_city_list_sort)
+    ui.city_sort_option = city_sort
+    city_controls.add_child(city_sort)
+    city_controls.add_child(_button("↕", _toggle_city_list_order, "quiet", 28))
+    var city_scroll := ScrollContainer.new()
+    city_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    city_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    cities.add_child(city_scroll)
+    var city_list := VBoxContainer.new()
+    city_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    city_list.add_theme_constant_override("separation", 3)
+    ui.city_list = city_list
+    city_scroll.add_child(city_list)
+    ui.city_tab = cities
+    tabs.add_child(cities)
     return tabs
 
 
@@ -649,11 +714,20 @@ func _right_panel() -> Control:
     var tabs := TabContainer.new()
     tabs.custom_minimum_size.x = 330
     tabs.mouse_filter = Control.MOUSE_FILTER_STOP
+    ui.right_tabs = tabs
+    var overview := _section("국가 개요")
+    overview.name = "국가"
+    var overview_detail := RichTextLabel.new()
+    overview_detail.bbcode_enabled = true
+    overview_detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    ui.right_country_overview = overview_detail
+    overview.add_child(overview_detail)
+    tabs.add_child(overview)
 
-    var province := _section("Province 정보")
-    province.name = "Province"
+    var province := _section("도시 상세")
+    province.name = "도시 상세"
     ui.province_title = _label(
-        "Province를 선택하세요",
+        "도시를 선택하세요",
         21,
         Color("#e4cf97")
     )
@@ -663,7 +737,35 @@ func _right_panel() -> Control:
     detail.bbcode_enabled = true
     detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
     ui.province_detail = detail
-    province.add_child(detail)
+    var detail_scroll := ScrollContainer.new()
+    detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    detail.custom_minimum_size.x = 280
+    detail_scroll.add_child(detail)
+    province.add_child(detail_scroll)
+    var governance := VBoxContainer.new()
+    governance.add_theme_constant_override("separation", 4)
+    province.add_child(governance)
+    var governance_row := HBoxContainer.new()
+    governance_row.add_theme_constant_override("separation", 4)
+    governance.add_child(governance_row)
+    var governance_option := OptionButton.new()
+    for level_value in [["direct", "직접 통치"], ["delegated", "방침 위임"], ["autonomous", "완전 자율"]]:
+        governance_option.add_item(String(level_value[1]))
+        governance_option.set_item_metadata(governance_option.item_count - 1, String(level_value[0]))
+    ui.governance_option = governance_option
+    governance_row.add_child(governance_option)
+    governance_row.add_child(_button("통치 예약", _queue_governance_level, "warning", 30))
+    var policy_row := HBoxContainer.new()
+    policy_row.add_theme_constant_override("separation", 4)
+    governance.add_child(policy_row)
+    var policy_option := OptionButton.new()
+    for policy_value in [["status_quo", "현상 유지"], ["gradual", "완만한 통합"], ["active", "적극적 통합"]]:
+        policy_option.add_item(String(policy_value[1]))
+        policy_option.set_item_metadata(policy_option.item_count - 1, String(policy_value[0]))
+    ui.assimilation_option = policy_option
+    policy_row.add_child(policy_option)
+    policy_row.add_child(_button("정책 예약", _queue_assimilation_policy, "warning", 30))
 
     ui.action_status = _label(
         "지도에서 Province를 선택하세요.",
@@ -683,8 +785,6 @@ func _right_panel() -> Control:
         ["공격  A", _prepare_move.bind("attack"), "danger"],
         ["개발 투자", _simple_command.bind("develop"), "default"],
         ["요새 건설", _simple_command.bind("fortify"), "default"],
-        ["수도 이전", _simple_command.bind("move_capital"), "default"],
-        ["점령지 관리", _simple_command.bind("occupation"), "default"],
         ["외교", _open_diplomacy, "default"]
     ]
     for action in province_actions:
@@ -760,6 +860,16 @@ func _bottom_panel() -> Control:
     wars.bbcode_enabled = true
     ui.wars = wars
     tabs.add_child(wars)
+    var turn_review_scroll := ScrollContainer.new()
+    turn_review_scroll.name = "턴 검토"
+    turn_review_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    var turn_review := VBoxContainer.new()
+    turn_review.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    turn_review.add_theme_constant_override("separation", 4)
+    ui.turn_review = turn_review
+    turn_review_scroll.add_child(turn_review)
+    ui.turn_review_tab = turn_review_scroll
+    tabs.add_child(turn_review_scroll)
     return tabs
 
 
@@ -956,29 +1066,13 @@ func _sync_snapshot(snapshot: Dictionary) -> void:
     selected_country = String(
         snapshot.get("player_country_id", selected_country)
     )
-    var country := gateway.country(selected_country)
-    var date: Dictionary = snapshot.get("date", {})
-
-    if ui.has("date"):
-        ui.date.text = "%d. %d. %d" % [
-            int(date.get("year", 1000)),
-            int(date.get("month", 1)),
-            int(date.get("day", 1))
-        ]
-    if ui.has("treasury"):
-        ui.treasury.text = _number(int(country.get("treasury", 0)))
-    if ui.has("income"):
-        ui.income.text = "+%s" % _number(_income(selected_country))
-    if ui.has("manpower"):
-        ui.manpower.text = _number(int(country.get("manpower", 0)))
-    if ui.has("stability"):
-        ui.stability.text = str(country.get("stability", 0))
-    if ui.has("exhaustion"):
-        ui.exhaustion.text = "%d%%" % int(
-            country.get("war_exhaustion", 0)
-        )
+    _refresh_top_bar(snapshot)
 
     _refresh_province()
+    _refresh_country_overview()
+    _refresh_city_list()
+    _refresh_notification_center()
+    _refresh_turn_review(gateway.turn_end_validation())
     _refresh_wars()
     _legend()
 
@@ -1175,11 +1269,16 @@ func _refresh_province() -> void:
 
 
 func _show_empty_province_selection() -> void:
-    ui.province_title.text = "Province를 선택하세요"
+    ui.province_title.text = "도시를 선택하세요"
     ui.province_detail.text = (
         "[color=#96a5aa]클릭·Shift 클릭·드래그 박스로 "
         + "여러 Province를 선택하세요.[/color]"
     )
+    ui.action_status.text = "도시를 선택하면 아래 고정 명령과 통치·융화 설정을 사용할 수 있습니다."
+    _refresh_governance_controls({})
+    if ui.has("right_tabs"):
+        ui.right_tabs.current_tab = 0
+    _refresh_country_overview()
 
 
 func _show_multiple_province_selection() -> void:
@@ -1211,6 +1310,9 @@ func _show_multiple_province_selection() -> void:
         _number(army_total)
     ]
     ui.action_status.text = "다중 선택 · Shift로 추가/해제 · 빈 영역 드래그 선택"
+    _refresh_governance_controls({})
+    if ui.has("right_tabs"):
+        ui.right_tabs.current_tab = 1
 
 
 func _show_single_province_selection() -> void:
@@ -1221,43 +1323,75 @@ func _show_single_province_selection() -> void:
         return
 
     var owner_id := String(province.get("owner", ""))
+    var controller_id := String(province.get("controller", owner_id))
     var owner := gateway.country(owner_id)
+    var controller := gateway.country(controller_id)
     var armies: Dictionary = gateway.snapshot().get("armies", {})
     var capital_suffix := ""
     if int(owner.get("capital_province", -1)) == selected_province:
         capital_suffix = "  ★ 수도"
+    if ui.has("right_tabs"):
+        ui.right_tabs.current_tab = 1
 
-    ui.province_title.text = (
-        String(province.get("name", "Province")) + capital_suffix
+    var risk_causes: String = String(read_model.city_risk_causes(province))
+    if risk_causes.is_empty():
+        risk_causes = "현재 두드러진 위험 요인이 없습니다."
+    var expected_income := int(
+        float(province.get("economy", 0.0))
+        * float(controller.get("tax_rate", 0.2))
+        * float(province.get("occupation_tax_multiplier", 1.0))
+        * float(province.get("governance_tax_multiplier", 1.0))
     )
+    var occupation_stage := String(province.get("occupation_stage", "formal"))
+    ui.province_title.text = String(province.get("name", "도시")) + capital_suffix
     ui.province_detail.text = (
-        "[color=#9eacb1]소유국[/color]  [b]%s[/b]\n"
-        + "[color=#9eacb1]점령국[/color]  %s\n\n"
-        + "인구  [b]%s[/b]     경제  [b]%s[/b]\n"
-        + "개발도  [b]%s[/b]     인력  [b]%s[/b]\n"
-        + "지형  [b]%s[/b]     요새  [b]%s[/b]\n"
-        + "불안도  [b]%s%%[/b]     주둔군  [b]%s[/b]\n\n"
-        + "예상 세입  [color=#7ec59f]+%s[/color]\n"
-        + "인접 Province  %s"
+        "[color=#9eacb1]소유국[/color]  [b]%s[/b]     [color=#9eacb1]통제국[/color]  %s\n"
+        + "점령 단계  [b]%s[/b] · %d턴     통치 수준  [b]%s[/b]\n"
+        + "임명 방식  %s\n\n"
+        + "인구  [b]%s[/b]     경제  [b]%s[/b]     개발  %s\n"
+        + "행복도  [b]%d[/b]     지방 안정  [b]%d[/b]     불안  %d\n"
+        + "정치 충성  [b]%d[/b]     시민 편입  [b]%d[/b]     문화 융화  [b]%d[/b]\n\n"
+        + "부패 위험  [b]%d[/b]     반란 위험  [color=%s][b]%d · %s[/b][/color]\n"
+        + "위험 원인  [color=#b8c0bd]%s[/color]\n"
+        + "감소 방법  주둔군 보강 · 행복/안정 회복 · 행정 부담 완화 · 융화 누적\n\n"
+        + "주둔군  [b]%s[/b]     저항/치안  %d / %d     외교 분쟁  %d\n"
+        + "진행 정책  [b]%s[/b] · 변경 가능 턴 %d\n"
+        + "세수 ×%.2f · 생산 ×%.2f · 보충 ×%.2f · 예상 세입 [color=#7ec59f]+%s[/color]\n"
+        + "직접 명령  %s"
     ) % [
         _country_name(owner_id),
-        _country_name(String(province.get("controller", owner_id))),
+        _country_name(controller_id),
+        _occupation_stage_label(occupation_stage),
+        int(province.get("occupation_turns", 0)),
+        _governance_level_label(String(province.get("governance_level", "direct"))),
+        String(province.get("governor_appointment_mode", "중앙 임명")),
         _number(int(province.get("population", 0))),
         _number(int(province.get("economy", 0))),
         str(province.get("development", 0)),
-        _number(int(province.get("manpower", 0))),
-        _terrain(String(province.get("terrain", "plains"))),
-        str(province.get("fort", 0)),
-        str(province.get("revolt_risk", 0)),
+        roundi(float(province.get("happiness", 0.0))),
+        roundi(float(province.get("local_stability", 0.0))),
+        roundi(float(province.get("unrest", 0.0))),
+        roundi(float(province.get("political_loyalty", 0.0))),
+        roundi(float(province.get("civic_integration", 0.0))),
+        roundi(float(province.get("cultural_assimilation", 0.0))),
+        roundi(float(province.get("corruption_risk", 0.0))),
+        _risk_color(String(province.get("risk_stage", "stable"))),
+        roundi(float(province.get("rebellion_risk", province.get("revolt_risk", 0.0)))),
+        _risk_stage_label(String(province.get("risk_stage", "stable"))),
+        risk_causes,
         _number(int(armies.get(selected_province, 0))),
-        str(
-            int(
-                float(province.get("economy", 0))
-                * float(owner.get("tax_rate", 0.2))
-            )
-        ),
-        _neighbor_names(province.get("neighbors", []))
+        roundi(float(province.get("resistance", 0.0))),
+        roundi(float(province.get("security", 0.0))),
+        roundi(float(province.get("diplomatic_dispute", 0.0))),
+        _assimilation_policy_label(String(province.get("assimilation_policy", "status_quo"))),
+        int(province.get("policy_cooldown_until", 0)),
+        float(province.get("occupation_tax_multiplier", 1.0)) * float(province.get("governance_tax_multiplier", 1.0)),
+        float(province.get("occupation_production_multiplier", 1.0)),
+        float(province.get("occupation_manpower_multiplier", 1.0)),
+        _number(expected_income),
+        "즉시 적용" if occupation_stage == "formal" else "전시 점령 중 · 턴 처리에서 제한/지연"
     ]
+    _refresh_governance_controls(province)
     ui.action_status.text = _province_action_status(owner_id)
 
 
@@ -1311,8 +1445,6 @@ func _simple_command(command_type: String) -> void:
     var command_labels := {
         "develop": "개발 투자",
         "fortify": "요새 건설",
-        "move_capital": "수도 이전",
-        "occupation": "점령지 관리"
     }
     var queued_count := 0
 
@@ -1334,6 +1466,40 @@ func _simple_command(command_type: String) -> void:
         "success" if queued_count > 0 else "warning"
     )
 
+func _queue_governance_level() -> void:
+    if selected_province == -1 or not ui.has("governance_option"):
+        _notify("통치 수준을 지정할 도시를 선택하세요.", "warning")
+        return
+    var province := gateway.province(selected_province)
+    if String(province.get("owner", "")) != selected_country:
+        _notify("정상 편입된 자국 도시에서만 통치 수준을 바꿀 수 있습니다.", "warning")
+        return
+    var level := String(ui.governance_option.get_selected_metadata())
+    var command_id := gateway.queue_command(
+        "change_governance",
+        {"province_id": selected_province, "governance_level": level},
+        {"title": "통치 수준 변경", "from": _province_name(selected_province), "level": level}
+    )
+    if command_id != -1:
+        _notify("%s 통치 변경을 턴 명령에 예약했습니다." % _governance_level_label(level), "success")
+
+
+func _queue_assimilation_policy() -> void:
+    if selected_province == -1 or not ui.has("assimilation_option"):
+        _notify("융화 정책을 지정할 도시를 선택하세요.", "warning")
+        return
+    var province := gateway.province(selected_province)
+    if String(province.get("controller", "")) != selected_country:
+        _notify("군사적으로 통제하는 도시에서만 융화 정책을 지정할 수 있습니다.", "warning")
+        return
+    var policy := String(ui.assimilation_option.get_selected_metadata())
+    var command_id := gateway.queue_command(
+        "set_assimilation_policy",
+        {"province_id": selected_province, "policy": policy},
+        {"title": "도시 융화 정책", "from": _province_name(selected_province), "policy": policy}
+    )
+    if command_id != -1:
+        _notify("%s 정책을 턴 명령에 예약했습니다." % _assimilation_policy_label(policy), "success")
 
 func _prepare_move(command_type: String = "move") -> void:
     pending_sources = _owned_selection()
@@ -1341,7 +1507,7 @@ func _prepare_move(command_type: String = "move") -> void:
         _notify("출발할 자국 Province를 선택하세요.", "warning")
         return
 
-    var available := read_model.available_army(pending_sources)
+    var available: int = int(read_model.available_army(pending_sources))
     if available <= 0:
         _notify("이동 가능한 병력이 없습니다.", "warning")
         _cancel_mode()
@@ -1831,14 +1997,10 @@ func _add_diplomacy_actions(
 ) -> void:
     var actions := [
         ["관계 개선", "improve_relations", 25],
-        ["모욕", "insult", 0],
         ["전쟁 선포", "declare_war", 50],
         ["평화 제안", "offer_peace", 20],
         ["동맹 제안", "offer_alliance", 35],
-        ["불가침 제안", "offer_non_aggression", 20],
-        ["군사 통행 요청", "request_access", 15],
         ["속국화 요구", "demand_vassalization", 80],
-        ["독립 요구", "demand_independence", 60]
     ]
 
     for action in actions:
@@ -2241,15 +2403,585 @@ func _notify(message: String, kind: String = "info") -> void:
     _on_resize()
 
 
+# Configurable top bar --------------------------------------------------------
+
+func _top_bar_configuration() -> Dictionary:
+    var preferences: Dictionary = gateway.ui_preferences()
+    var saved: Dictionary = {}
+    var raw_top_bar: Variant = preferences.get("top_bar", {})
+    if raw_top_bar is Dictionary:
+        saved = raw_top_bar.duplicate(true)
+
+    var order: Array = []
+    var raw_order: Variant = saved.get("order", [])
+    if raw_order is Array:
+        for value in raw_order:
+            var item_id := String(value)
+            if (item_id in TOP_BAR_DEFAULT or item_id in TOP_BAR_OPTIONAL) \
+                    and item_id not in order:
+                order.append(item_id)
+    for item_id in TOP_BAR_DEFAULT + TOP_BAR_OPTIONAL:
+        if item_id not in order:
+            order.append(item_id)
+
+    var visible: Dictionary = {}
+    var raw_visible: Variant = saved.get("visible", {})
+    if raw_visible is Dictionary:
+        visible = raw_visible.duplicate(true)
+    for item_id in order:
+        if not visible.has(item_id):
+            visible[item_id] = item_id in TOP_BAR_DEFAULT
+    return {"order": order, "visible": visible}
+
+
+func _apply_top_bar_preferences() -> void:
+    if not ui.has("top_bar_row") or not ui.has("top_bar_stat_entries"):
+        return
+    var row: HBoxContainer = ui.top_bar_row
+    var entries: Dictionary = ui.top_bar_stat_entries
+    var configuration := _top_bar_configuration()
+    var compact := get_viewport_rect().size.x < 1440.0
+    var next_index := 2
+    for item_value in configuration.get("order", []):
+        var item_id := String(item_value)
+        var entry_value: Variant = entries.get(item_id, null)
+        if entry_value is not Control:
+            continue
+        var entry: Control = entry_value
+        entry.visible = bool(configuration.get("visible", {}).get(item_id, false))
+        entry.tooltip_text = String(TOP_BAR_LABELS.get(item_id, item_id))
+        entry.custom_minimum_size.x = 54 if compact else 74
+        if entry.get_child_count() > 0 and entry.get_child(0) is Label:
+            entry.get_child(0).visible = not compact
+        if entry.visible:
+            row.move_child(entry, next_index)
+            next_index += 1
+    _refresh_top_bar(gateway.snapshot())
+
+
+func _refresh_top_bar(snapshot: Dictionary) -> void:
+    if not ui.has("date"):
+        return
+    var country := gateway.country(selected_country)
+    var date: Dictionary = snapshot.get("date", {})
+    var notifications: Array = snapshot.get("notifications", [])
+    var wars: Array = snapshot.get("wars", [])
+    var administration_load := float(country.get("administrative_load", 0.0))
+    var administration_capacity := float(
+        country.get("administrative_capacity_effective", country.get("administration_capacity", 0.0))
+    )
+    _set_top_bar_value("date", "%d년 %s" % [
+        int(date.get("year", 1000)), _season_name(int(date.get("month", 1)))
+    ])
+    _set_top_bar_value("treasury", _number(int(country.get("treasury", 0))))
+    _set_top_bar_value("resources", "인력 %s" % _number(int(country.get("manpower", 0))))
+    _set_top_bar_value("war", "평화" if wars.is_empty() else "전쟁 %d" % wars.size())
+    _set_top_bar_value("urgent", str(_notification_unread_count(notifications, "emergency")))
+    _set_top_bar_value("population", _number(_country_total(selected_country, "population")))
+    _set_top_bar_value("happiness", str(roundi(read_model.average_city_value(selected_country, "happiness"))))
+    _set_top_bar_value("stability", str(roundi(read_model.average_city_value(selected_country, "local_stability"))))
+    _set_top_bar_value("administration", "%d/%d" % [roundi(administration_load), roundi(administration_capacity)])
+    _set_top_bar_value("legitimacy", str(roundi(float(country.get("legitimacy_hidden", country.get("stability", 0.0))))))
+    _set_top_bar_value("military", _number(_army_total(selected_country)))
+    _set_top_bar_value("revolt_cities", str(read_model.revolt_risk_city_count(selected_country)))
+
+
+func _set_top_bar_value(item_id: String, value: String) -> void:
+    if not ui.has(item_id):
+        return
+    var node: Variant = ui[item_id]
+    if node is Label:
+        node.text = value
+
+
+func _season_name(month: int) -> String:
+    if month in [3, 4, 5]:
+        return "봄"
+    if month in [6, 7, 8]:
+        return "여름"
+    if month in [9, 10, 11]:
+        return "가을"
+    return "겨울"
+
+
+func _notification_unread_count(
+    notifications: Array,
+    minimum_severity: String = "info"
+) -> int:
+    var severity_order := {"info": 0, "caution": 1, "important": 2, "emergency": 3}
+    var threshold := int(severity_order.get(minimum_severity, 0))
+    var count := 0
+    for notification_value in notifications:
+        if notification_value is not Dictionary:
+            continue
+        var notification: Dictionary = notification_value
+        if bool(notification.get("read", false)):
+            continue
+        if int(severity_order.get(String(notification.get("severity", "info")), 0)) >= threshold:
+            count += 1
+    return count
+
+
+func _open_top_bar_settings() -> void:
+    var window := Window.new()
+    window.title = "상단 정보 바 표시 설정"
+    window.exclusive = true
+    window.size = Vector2i(540, 590)
+    window.close_requested.connect(window.queue_free)
+    add_child(window)
+    var box := _window_box(window)
+    box.add_child(_label("표시할 지표를 고르고 ← →로 순서를 바꿉니다.", 13, Color("#aab5b9")))
+    box.add_child(_label("긴급 알림은 숨겨도 상단 경고 버튼으로 계속 알려드립니다.", 12, Color("#b99766")))
+    var configuration := _top_bar_configuration()
+    for item_value in configuration.get("order", []):
+        var item_id := String(item_value)
+        var row := HBoxContainer.new()
+        row.add_theme_constant_override("separation", 6)
+        var enabled := CheckBox.new()
+        enabled.text = String(TOP_BAR_LABELS.get(item_id, item_id))
+        enabled.button_pressed = bool(configuration.get("visible", {}).get(item_id, false))
+        enabled.toggled.connect(_set_top_bar_visibility.bind(item_id, window))
+        row.add_child(enabled)
+        row.add_spacer(true)
+        row.add_child(_button("←", _move_top_bar_item.bind(item_id, -1, window), "quiet", 28))
+        row.add_child(_button("→", _move_top_bar_item.bind(item_id, 1, window), "quiet", 28))
+        box.add_child(row)
+    box.add_child(_button("저장 후 닫기", _save_and_close_top_bar_settings.bind(window), "primary", 34))
+    window.popup_centered()
+
+
+func _set_top_bar_visibility(
+    pressed: bool,
+    item_id: String,
+    window: Window
+) -> void:
+    var configuration := _top_bar_configuration()
+    configuration["visible"][item_id] = pressed
+    _save_top_bar_configuration(configuration)
+
+
+func _move_top_bar_item(
+    item_id: String,
+    direction: int,
+    window: Window
+) -> void:
+    var configuration := _top_bar_configuration()
+    var order: Array = configuration.get("order", []).duplicate()
+    var index := order.find(item_id)
+    var destination := clampi(index + direction, 0, order.size() - 1)
+    if index == -1 or destination == index:
+        return
+    var displaced: Variant = order[destination]
+    order[destination] = item_id
+    order[index] = displaced
+    configuration["order"] = order
+    _save_top_bar_configuration(configuration)
+    window.queue_free()
+    call_deferred("_open_top_bar_settings")
+
+
+func _save_top_bar_configuration(configuration: Dictionary) -> void:
+    if gateway.update_ui_preferences({"top_bar": configuration}):
+        _apply_top_bar_preferences()
+        var saved: Dictionary = gateway.save_autosave()
+        if not bool(saved.get("ok", false)):
+            _notify("상단 바 설정을 자동 저장하지 못했습니다.", "warning")
+
+
+func _save_and_close_top_bar_settings(window: Window) -> void:
+    var saved: Dictionary = gateway.save_autosave()
+    if not bool(saved.get("ok", false)):
+        _notify("설정 자동 저장에 실패했습니다.", "warning")
+        return
+    window.queue_free()
+
+
+func _refresh_country_overview() -> void:
+    if not ui.has("right_country_overview"):
+        return
+    var country := gateway.country(selected_country)
+    var wars: Array = gateway.snapshot().get("wars", [])
+    var capital_id := int(country.get("capital_province", -1))
+    ui.right_country_overview.text = (
+        "[font_size=20][color=#dec783]%s[/color][/font_size]\n"
+        + "정부  [b]%s[/b] · 수도  [b]%s[/b]\n\n"
+        + "국고  [b]%s[/b]     인력  [b]%s[/b]     군사력  [b]%s[/b]\n"
+        + "인구  [b]%s[/b]     평균 행복  [b]%d[/b]     평균 안정  [b]%d[/b]\n"
+        + "행정 부담  [b]%.1f / %.1f[/b] · 압박 %d\n"
+        + "정통성  [b]%d[/b]     전쟁  [b]%s[/b]\n\n"
+        + "도시를 선택하면 통치·점령·융화 진행과 위험 원인을 이 탭 옆에서 관리합니다."
+    ) % [
+        String(country.get("name", selected_country)),
+        String(country.get("government", "정부")),
+        _province_name(capital_id),
+        _number(int(country.get("treasury", 0))),
+        _number(int(country.get("manpower", 0))),
+        _number(_army_total(selected_country)),
+        _number(_country_total(selected_country, "population")),
+        roundi(read_model.average_city_value(selected_country, "happiness")),
+        roundi(read_model.average_city_value(selected_country, "local_stability")),
+        float(country.get("administrative_load", 0.0)),
+        float(country.get("administrative_capacity_effective", country.get("administration_capacity", 0.0))),
+        roundi(float(country.get("administrative_pressure", 0.0))),
+        roundi(float(country.get("legitimacy_hidden", country.get("stability", 0.0)))),
+        "평화" if wars.is_empty() else "%d개 전쟁" % wars.size()
+    ]
+# City management, notification, and risk presentation ----------------------
+
+func _set_city_list_filter(index: int) -> void:
+    if ui.has("city_filter_option"):
+        city_list_filter_id = String(ui.city_filter_option.get_item_metadata(index))
+    _refresh_city_list()
+
+
+func _set_city_list_sort(index: int) -> void:
+    if ui.has("city_sort_option"):
+        city_list_sort_key = String(ui.city_sort_option.get_item_metadata(index))
+    _refresh_city_list()
+
+
+func _toggle_city_list_order() -> void:
+    city_list_descending = not city_list_descending
+    _refresh_city_list()
+
+
+func _refresh_city_list() -> void:
+    if not ui.has("city_list"):
+        return
+    var list: VBoxContainer = ui.city_list
+    for child in list.get_children():
+        child.queue_free()
+    var rows: Array = read_model.city_rows(
+        selected_country,
+        city_list_sort_key,
+        city_list_filter_id,
+        city_list_descending
+    )
+    if rows.is_empty():
+        list.add_child(_label("현재 조건에 맞는 자국 도시가 없습니다.", 12, Color("#87959b")))
+        return
+    for row_value in rows:
+        if row_value is not Dictionary:
+            continue
+        var row: Dictionary = row_value
+        var province_id := int(row.get("province_id", -1))
+        var stage := _occupation_stage_label(String(row.get("occupation_stage", "formal")))
+        var governance := _governance_level_label(String(row.get("governance_level", "direct")))
+        var risk := roundi(float(row.get("rebellion_risk", row.get("revolt_risk", 0.0))))
+        var summary := "%s  인구 %s · 경제 %s · 행복 %d · 안정 %d\n%s · %s · 반란 %d(%s)" % [
+            String(row.get("name", "도시")),
+            _number(int(row.get("population", 0))),
+            _number(int(row.get("economy", 0))),
+            roundi(float(row.get("happiness", 0.0))),
+            roundi(float(row.get("local_stability", 0.0))),
+            stage,
+            governance,
+            risk,
+            _risk_stage_label(String(row.get("risk_stage", "stable")))
+        ]
+        var button := _button(
+            summary,
+            _select_city_from_list.bind(province_id),
+            "selected" if province_id == selected_province else "list",
+            52
+        )
+        button.tooltip_text = "반란 위험 원인: %s" % read_model.city_risk_causes(row)
+        list.add_child(button)
+
+
+func _select_city_from_list(province_id: int) -> void:
+    if gateway.province(province_id).is_empty():
+        _notify("선택한 도시가 더 이상 존재하지 않습니다.", "warning")
+        _refresh_city_list()
+        return
+    selected_province = province_id
+    selected_provinces = [province_id]
+    var game_map := _game_map()
+    if game_map != null:
+        game_map.selected_province_id = province_id
+    _focus_city_adapter(province_id)
+    _refresh_province()
+    _refresh_city_list()
+
+
+func _focus_city_adapter(province_id: int) -> void:
+    var game_map := _game_map()
+    if game_map == null:
+        return
+    if game_map.has_method("focus_city"):
+        game_map.call("focus_city", province_id)
+    else:
+        game_map.focus_province(province_id)
+
+
+func _refresh_governance_controls(province: Dictionary) -> void:
+    if not ui.has("governance_option") or not ui.has("assimilation_option"):
+        return
+    var governance_option: OptionButton = ui.governance_option
+    var policy_option: OptionButton = ui.assimilation_option
+    var owned := String(province.get("owner", "")) == selected_country
+    var controlled := String(province.get("controller", "")) == selected_country
+    var allowed: Array = gateway.governance_options(selected_country)
+    for index in range(governance_option.item_count):
+        var level := String(governance_option.get_item_metadata(index))
+        governance_option.set_item_disabled(index, level not in allowed)
+        if level == String(province.get("governance_level", "direct")):
+            governance_option.select(index)
+    for index in range(policy_option.item_count):
+        var policy := String(policy_option.get_item_metadata(index))
+        if policy == String(province.get("assimilation_policy", "status_quo")):
+            policy_option.select(index)
+    governance_option.disabled = not owned
+    policy_option.disabled = not controlled
+    governance_option.tooltip_text = "정부 형태가 허용하는 통치 수준만 선택할 수 있습니다. 변경은 다음 턴에 적용됩니다."
+    policy_option.tooltip_text = "정책은 최소 유지 기간과 cooldown을 지키며 턴마다 누적됩니다."
+    if governance_option.get_parent() != null and governance_option.get_parent().get_child_count() > 1:
+        var governance_button: Variant = governance_option.get_parent().get_child(1)
+        if governance_button is Button:
+            governance_button.disabled = not owned
+    if policy_option.get_parent() != null and policy_option.get_parent().get_child_count() > 1:
+        var policy_button: Variant = policy_option.get_parent().get_child(1)
+        if policy_button is Button:
+            policy_button.disabled = not controlled
+
+
+func _refresh_notification_center(_signal_notifications: Array = []) -> void:
+    if not ui.has("notification_list"):
+        return
+    var list: VBoxContainer = ui.notification_list
+    for child in list.get_children():
+        child.queue_free()
+    var notifications := gateway.notifications()
+    var unread := _notification_unread_count(notifications)
+    var emergency := _notification_unread_count(notifications, "emergency")
+    if ui.has("alert_button"):
+        ui.alert_button.text = "긴급 %d · 알림 %d" % [emergency, unread] if emergency > 0 else "알림 %d" % unread
+    if notifications.is_empty():
+        list.add_child(_label("아직 새 알림이 없습니다. 긴급 상황은 이곳과 상단 경고에 표시됩니다.", 12, Color("#87959b")))
+        return
+    for index in range(notifications.size() - 1, -1, -1):
+        var notification_value: Variant = notifications[index]
+        if notification_value is not Dictionary:
+            continue
+        var notification: Dictionary = notification_value
+        var severity := String(notification.get("severity", "info"))
+        var read_prefix := "" if bool(notification.get("read", false)) else "● "
+        var text := "%s[%s] %s\n턴 %d · %s%s" % [
+            read_prefix,
+            _notification_severity_label(severity),
+            String(notification.get("title", "알림")),
+            int(notification.get("last_turn", notification.get("turn", 0))),
+            String(notification.get("message", "")),
+            " (반복 %d회)" % int(notification.get("count", 1)) if int(notification.get("count", 1)) > 1 else ""
+        ]
+        var button := _button(
+            text,
+            _activate_notification.bind(notification),
+            _notification_button_variant(severity),
+            58
+        )
+        button.tooltip_text = "읽음 처리 후 관련 도시·명령 위치로 이동합니다."
+        list.add_child(button)
+        if severity == "emergency" and not bool(notification.get("read", false)):
+            var notification_id := int(notification.get("id", -1))
+            if notification_id != last_emergency_notification_id:
+                last_emergency_notification_id = notification_id
+                _notify(String(notification.get("title", "긴급 알림")), "warning")
+
+
+func _open_notifications() -> void:
+    if ui.has("left_tabs") and ui.has("notification_tab"):
+        var index: int = int(ui.left_tabs.get_tab_idx_from_control(ui.notification_tab))
+        if index >= 0:
+            ui.left_tabs.current_tab = index
+
+
+func _activate_notification(notification: Dictionary) -> void:
+    gateway.mark_notification_read(int(notification.get("id", -1)))
+    var action: Variant = notification.get("action", {})
+    if action is Dictionary:
+        _handle_navigation_action(action)
+    _refresh_notification_center()
+
+
+func _handle_navigation_action(action: Dictionary) -> void:
+    match String(action.get("type", "")):
+        "focus_province":
+            var province_id := int(action.get("province_id", -1))
+            if province_id != -1:
+                _select_city_from_list(province_id)
+        "inspect_command":
+            _bottom_tab(0)
+        "save_preferences":
+            gateway.save_autosave()
+
+
+func _notification_severity_label(severity: String) -> String:
+    return {"info": "정보", "caution": "주의", "important": "중요", "emergency": "긴급"}.get(severity, severity)
+
+
+func _notification_button_variant(severity: String) -> String:
+    match severity:
+        "emergency":
+            return "danger"
+        "important", "caution":
+            return "warning"
+    return "quiet"
+
+
+func _governance_level_label(level: String) -> String:
+    return {"direct": "직접 통치", "delegated": "방침 위임", "autonomous": "완전 자율"}.get(level, level)
+
+
+func _occupation_stage_label(stage: String) -> String:
+    return {"immediate": "점령 직후", "sustained": "지속 통제", "de_facto": "사실상 편입", "formal": "정상 편입"}.get(stage, stage)
+
+
+func _assimilation_policy_label(policy: String) -> String:
+    return {"status_quo": "현상 유지", "gradual": "완만한 통합", "active": "적극적 통합"}.get(policy, policy)
+
+
+func _risk_stage_label(stage: String) -> String:
+    return {"stable": "안정", "caution": "주의", "danger": "위험", "imminent": "임박"}.get(stage, stage)
+
+
+func _risk_color(stage: String) -> String:
+    return {"stable": "#7ec59f", "caution": "#d8b66f", "danger": "#df8a68", "imminent": "#d86666"}.get(stage, "#d8d8ce")
+# Turn review and adaptive panel layout --------------------------------------
+
+func _request_turn_end() -> void:
+    var review := gateway.turn_end_validation()
+    _refresh_turn_review(review)
+    if not review.get("blocking", []).is_empty():
+        _open_turn_review()
+        _notify("턴 종료를 차단하는 항목이 있습니다. 턴 검토에서 조치하세요.", "warning")
+        return
+    if not review.get("important", []).is_empty():
+        _open_turn_review()
+        _confirm_important_turn(review)
+        return
+    gateway.submit_turn()
+
+
+func _confirm_important_turn(review: Dictionary) -> void:
+    var dialog := ConfirmationDialog.new()
+    dialog.title = "중요 경고 확인"
+    dialog.ok_button_text = "확인 후 진행"
+    var lines := PackedStringArray()
+    for item_value in review.get("important", []):
+        if item_value is not Dictionary:
+            continue
+        var item: Dictionary = item_value
+        lines.append("• %s" % String(item.get("title", "중요 항목")))
+    dialog.dialog_text = "아래 항목은 턴 검토 탭에서 조치할 수 있습니다. 그래도 진행하시겠습니까?\n\n%s" % "\n".join(lines)
+    dialog.confirmed.connect(func(): gateway.submit_turn(true))
+    dialog.canceled.connect(dialog.queue_free)
+    add_child(dialog)
+    dialog.popup_centered(Vector2i(560, 320))
+
+
+func _refresh_turn_review(review: Dictionary) -> void:
+    if not ui.has("turn_review"):
+        return
+    var list: VBoxContainer = ui.turn_review
+    for child in list.get_children():
+        child.queue_free()
+    var categories := [
+        ["차단", "blocking", Color("#d66c67")],
+        ["중요 경고", "important", Color("#d3a86b")],
+        ["권고", "recommendations", Color("#91a8a8")]
+    ]
+    var found := false
+    for category_value in categories:
+        var entries: Array = review.get(String(category_value[1]), [])
+        if entries.is_empty():
+            continue
+        found = true
+        list.add_child(_label("%s · %d" % [String(category_value[0]), entries.size()], 14, category_value[2]))
+        for entry_value in entries:
+            if entry_value is not Dictionary:
+                continue
+            var entry: Dictionary = entry_value
+            var row := HBoxContainer.new()
+            row.add_theme_constant_override("separation", 8)
+            var text_box := VBoxContainer.new()
+            text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+            text_box.add_child(_label(String(entry.get("title", "검토 항목")), 13, Color("#d8d8ce")))
+            var detail := _label(String(entry.get("detail", "")), 12, Color("#91a0a6"))
+            detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+            text_box.add_child(detail)
+            row.add_child(text_box)
+            var action: Variant = entry.get("action", {})
+            if action is Dictionary and not action.is_empty():
+                row.add_child(_button("이동", _activate_turn_review_action.bind(entry), "quiet", 30))
+            list.add_child(row)
+    if not found:
+        list.add_child(_label("턴을 진행할 준비가 되었습니다. 명령과 위험은 매번 여기서 요약됩니다.", 13, Color("#7ec59f")))
+
+
+func _open_turn_review() -> void:
+    if not ui.has("bottom_tabs") or not ui.has("turn_review_tab"):
+        return
+    var index: int = int(ui.bottom_tabs.get_tab_idx_from_control(ui.turn_review_tab))
+    if index >= 0:
+        ui.bottom_tabs.current_tab = index
+
+
+func _activate_turn_review_action(entry: Dictionary) -> void:
+    var action: Variant = entry.get("action", {})
+    if action is Dictionary:
+        _handle_navigation_action(action)
+    _refresh_turn_review(gateway.turn_end_validation())
+
+
+func _right_panel_width() -> int:
+    var preferences: Dictionary = gateway.ui_preferences()
+    return clampi(int(preferences.get("right_panel_width", 330)), 260, 520)
+
+
+func _apply_right_panel_width() -> void:
+    if not ui.has("center_right_split") or not ui.has("right_panel"):
+        return
+    var split: HSplitContainer = ui.center_right_split
+    if split.size.x <= 0.0:
+        call_deferred("_apply_right_panel_width")
+        return
+    var width := _right_panel_width()
+    ui.right_panel.custom_minimum_size.x = width
+    split.split_offset = maxi(320, int(split.size.x) - width)
+
+
+func _on_right_panel_dragged(offset: int) -> void:
+    if not ui.has("center_right_split"):
+        return
+    pending_right_panel_width = clampi(
+        int(ui.center_right_split.size.x) - offset,
+        260,
+        520
+    )
+    if panel_width_save_queued:
+        return
+    panel_width_save_queued = true
+    call_deferred("_persist_right_panel_width")
+
+
+func _persist_right_panel_width() -> void:
+    panel_width_save_queued = false
+    if pending_right_panel_width < 0:
+        return
+    var width := pending_right_panel_width
+    pending_right_panel_width = -1
+    if gateway.update_ui_preferences({"right_panel_width": width}):
+        gateway.save_autosave()
 # Settings and layout --------------------------------------------------------
 
 func _settings() -> void:
+    if state == ScreenState.GAME:
+        _open_top_bar_settings()
+        return
     var dialog := AcceptDialog.new()
-    dialog.title = "설정"
-    dialog.dialog_text = (
-        "UI 배율·접근성 설정은 저장 API 연결 후 영구 보관됩니다.\n"
-        + "현재 화면은 Container와 anchor로 반응형 배치됩니다."
-    )
+    dialog.title = "표시 설정"
+    dialog.dialog_text = "상단 정보 바와 도시 패널 폭은 게임을 시작한 뒤 ‘표시’ 버튼에서 바꿀 수 있으며 자동 저장됩니다."
     dialog.confirmed.connect(dialog.queue_free)
     dialog.canceled.connect(dialog.queue_free)
     add_child(dialog)
@@ -2264,6 +2996,8 @@ func _on_resize() -> void:
         - toast.custom_minimum_size.x * 0.5,
         18
     )
+    _apply_top_bar_preferences()
+    _apply_right_panel_width()
 
 
 func _frame_map(strategy_map: StrategicMap) -> void:

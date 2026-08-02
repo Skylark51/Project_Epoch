@@ -1,6 +1,7 @@
 extends Control
 
 const GOVERNANCE_SESSION_SCRIPT := preload("res://src/governance/governance_session.gd")
+const UI_FACTORY := preload("res://src/ui/project_epoch_ui_factory.gd")
 const SEED_PATH := "res://data/governance/sample_governance_state.json"
 const GOVERNANCE_DATA_VERSION := 1
 const GAME_SCREEN_STATE := 3
@@ -964,24 +965,4 @@ func _label(value: String, font_size: int, color: Color) -> Label:
 
 
 func _button(value: String, callback: Callable, variant: String = "default", height: int = 40) -> Button:
-    var button := Button.new()
-    button.text = value
-    button.custom_minimum_size.y = height
-    button.pressed.connect(callback)
-    if variant == "primary":
-        var style := StyleBoxFlat.new()
-        style.bg_color = Color("#6f5935")
-        style.border_color = Color("#d0b06a")
-        style.set_border_width_all(1)
-        style.set_corner_radius_all(6)
-        button.add_theme_stylebox_override("normal", style)
-    elif variant == "danger":
-        var danger_style := StyleBoxFlat.new()
-        danger_style.bg_color = Color("#573238")
-        danger_style.border_color = Color("#bd6d69")
-        danger_style.set_border_width_all(1)
-        danger_style.set_corner_radius_all(6)
-        button.add_theme_stylebox_override("normal", danger_style)
-    elif variant == "list":
-        button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    return button
+    return UI_FACTORY.button(value, callback, variant, height)

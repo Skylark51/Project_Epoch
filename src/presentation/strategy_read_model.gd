@@ -47,12 +47,13 @@ func _init(strategy_gateway) -> void:
 
 
 func number(value: int) -> String:
-    if abs(value) >= 1_000_000:
-        return "%.1fM" % (float(value) / 1_000_000.0)
-    if abs(value) >= 1_000:
-        return "%.1fK" % (float(value) / 1_000.0)
+    var sign_multiplier := -1.0 if value < 0 else 1.0
+    var magnitude := float(abs(value))
+    if magnitude >= 1_000_000.0:
+        return "%.1fM" % (sign_multiplier * floor(magnitude / 100_000.0) / 10.0)
+    if magnitude >= 1_000.0:
+        return "%.1fK" % (sign_multiplier * floor(magnitude / 100.0) / 10.0)
     return str(value)
-
 
 func country_name(country_id: String) -> String:
     return String(gateway.country(country_id).get("name", country_id))
@@ -86,6 +87,17 @@ func owned_provinces(country_id: String) -> Array[int]:
         if String(gateway.province(province_id).get("owner", "")) == country_id:
             result.append(province_id)
     return result
+
+func managed_provinces(country_id: String) -> Array[int]:
+    var result: Array[int] = []
+    for province_id_value in _snapshot().get("provinces", {}).keys():
+        var province_id := int(province_id_value)
+        var province: Dictionary = gateway.province(province_id)
+        if String(province.get("owner", "")) == country_id \
+                or String(province.get("controller", "")) == country_id:
+            result.append(province_id)
+    return result
+
 
 
 func active_selection(
@@ -133,6 +145,40 @@ func income(country_id: String) -> int:
     var economy := float(country_total(country_id, "economy"))
     var tax_rate := float(gateway.country(country_id).get("tax_rate", 0.2))
     return int(economy * tax_rate)
+func average_city_value(country_id: String, field_name: String) -> float:
+    var province_ids := managed_provinces(country_id)
+    if province_ids.is_empty():
+        return 0.0
+    var total := 0.0
+    for province_id in province_ids:
+        total += float(gateway.province(province_id).get(field_name, 0.0))
+    return total / float(province_ids.size())
+func revolt_risk_city_count(country_id: String, threshold: float = 50.0) -> int:
+    var count := 0
+    for province_id in managed_provinces(country_id):
+        if float(gateway.province(province_id).get("rebellion_risk", 0.0)) >= threshold:
+            count += 1
+    return count
+func city_rows(country_id: String, sort_key: String, filter_id: String, descending: bool) -> Array:
+    var rows: Array = []
+    for province_id in managed_provinces(country_id):
+        var province: Dictionary = gateway.province(province_id)
+        if not _city_matches_filter(province, filter_id):
+            continue
+        var row: Dictionary = Dictionary(province.duplicate(true))
+        row["province_id"] = province_id
+        rows.append(row)
+    rows.sort_custom(func(first: Dictionary, second: Dictionary) -> bool:
+        var first_value: Variant = _city_sort_value(first, sort_key)
+        var second_value: Variant = _city_sort_value(second, sort_key)
+        var before := false
+        if first_value is String or second_value is String:
+            before = String(first_value).naturalnocasecmp_to(String(second_value)) < 0
+        else:
+            before = float(first_value) < float(second_value)
+        return not before if descending else before
+    )
+    return rows
 
 
 func available_army(province_ids: Array[int], leave_garrison: int = 1) -> int:
@@ -206,6 +252,44 @@ func command_icon(command_type: String) -> String:
 
 func diplomacy_name(command_type: String) -> String:
     return String(DIPLOMACY_NAMES.get(command_type, command_type))
+func city_risk_causes(province: Dictionary) -> String:
+    var items := PackedStringArray()
+    for factor_value in province.get("risk_factors", []):
+        var factor: Dictionary = factor_value
+        if float(factor.get("value", 0.0)) <= 0.0:
+            continue
+        items.append("%s %.1f" % [String(factor.get("name", "factor")), float(factor.get("value", 0.0))])
+        if items.size() == 3:
+            break
+    return ", ".join(items)
+func _city_matches_filter(province: Dictionary, filter_id: String) -> bool:
+    if filter_id == "all":
+        return true
+    if filter_id == "occupied":
+        return String(province.get("occupation_stage", "formal")) != "formal"
+    if filter_id == "risk":
+        return float(province.get("rebellion_risk", 0.0)) >= 50.0
+    if filter_id in ["direct", "delegated", "autonomous"]:
+        return String(province.get("governance_level", "direct")) == filter_id
+    if filter_id == "policy":
+        return String(province.get("assimilation_policy", "status_quo")) != "status_quo"
+    return true
+func _city_sort_value(province: Dictionary, sort_key: String) -> Variant:
+    match sort_key:
+        "city_name":
+            return String(province.get("name", ""))
+        "population", "economy", "happiness", "stability", "rebellion_risk":
+            return float(province.get(sort_key, 0.0))
+        "occupation":
+            var stage_order: Dictionary = {"immediate": 0, "sustained": 1, "de_facto": 2, "formal": 3}
+            return int(stage_order.get(String(province.get("occupation_stage", "formal")), 3))
+        "governance":
+            var level_order: Dictionary = {"direct": 0, "delegated": 1, "autonomous": 2}
+            return int(level_order.get(String(province.get("governance_level", "direct")), 3))
+        "policy":
+            return String(province.get("assimilation_policy", "status_quo"))
+        _:
+            return String(province.get("name", ""))
 
 
 func _snapshot() -> Dictionary:
