@@ -20,6 +20,7 @@ signal turn_requested(commands: Array)
 signal integration_notice(message: String)
 signal new_game_started(snapshot: Dictionary)
 signal autosave_loaded(snapshot: Dictionary)
+signal notifications_changed(notifications: Array)
 
 
 var autosave_path := AUTOSAVE_PATH
@@ -32,6 +33,7 @@ var _visual_geometry: Dictionary = {}
 var _world_map_manifest: Dictionary = {}
 var _next_command_id := 1
 var _snapshot_presenter := StrategySnapshotPresenterScript.new()
+var _ui_preferences_dirty := false
 
 
 # -----------------------------------------------------------------------------
@@ -71,10 +73,14 @@ func select_player_country(country_id: String) -> bool:
     return true
 
 
-func submit_turn() -> void:
+func submit_turn(force: bool = false) -> void:
+    var validation := turn_end_validation()
+    if not force and not validation.get("blocking", []).is_empty():
+        integration_notice.emit("턴 종료 차단: 먼저 턴 검토 항목을 해결하세요.")
+        return
     turn_requested.emit(commands())
 
-    var result: Dictionary = game.end_turn()
+    var result: Dictionary = game.end_turn(force)
     if not bool(result.get("ok", false)):
         integration_notice.emit(
             "턴 처리 실패: %s" % _result_reason(result)
@@ -268,9 +274,11 @@ func load_autosave() -> bool:
 
     _commands.clear()
     _snapshot = _presentation_snapshot(game.get_public_snapshot())
+    _ui_preferences_dirty = false
 
     autosave_loaded.emit(snapshot())
     snapshot_changed.emit(snapshot())
+    notifications_changed.emit(notifications())
     command_queue_changed.emit(commands())
     return true
 
@@ -285,6 +293,29 @@ func governance_save_data() -> Dictionary:
         return {}
 
     return game.state.governance_state.duplicate(true)
+func turn_end_validation() -> Dictionary:
+    return game.turn_end_validation(_ui_preferences_dirty)
+func update_ui_preferences(patch: Dictionary) -> bool:
+    var result: Dictionary = game.update_ui_preferences(patch)
+    if not bool(result.get("ok", false)):
+        integration_notice.emit("UI 설정 저장 실패: %s" % _result_reason(result))
+        return false
+    _ui_preferences_dirty = true
+    _sync_from_core()
+    return true
+func ui_preferences() -> Dictionary:
+    return _snapshot.get("ui_preferences", {}).duplicate(true)
+func notifications() -> Array:
+    return _snapshot.get("notifications", []).duplicate(true)
+func mark_notification_read(notification_id: int) -> bool:
+    var marked := game.mark_notification_read(notification_id)
+    if marked:
+        _sync_from_core()
+    return marked
+func governance_options(country_id: String = "") -> Array:
+    var target_country_id := country_id if not country_id.is_empty() else String(_snapshot.get("player_country_id", ""))
+    return game.governance_options(target_country_id)
+
 
 
 func save_autosave() -> Dictionary:
@@ -295,6 +326,8 @@ func save_autosave() -> Dictionary:
         }
 
     var result: Dictionary = game.save(autosave_path)
+    if bool(result.get("ok", false)):
+        _ui_preferences_dirty = false
     if not bool(result.get("ok", false)):
         integration_notice.emit(
             "통합 저장 실패: %s" % _result_reason(result)
@@ -329,6 +362,7 @@ func _presentation_snapshot(core: Dictionary) -> Dictionary:
 func _sync_from_core() -> void:
     _snapshot = _presentation_snapshot(game.get_public_snapshot())
     snapshot_changed.emit(snapshot())
+    notifications_changed.emit(notifications())
 
 
 func _load_presentation_resources() -> void:

@@ -10,6 +10,7 @@ const PeaceSystem = preload("res://src/systems/peace_system.gd")
 const StabilitySystem = preload("res://src/systems/stability_system.gd")
 const StrategicMilitary = preload("res://src/systems/strategic_military_system.gd")
 const AIDirector = preload("res://src/ai/ai_director.gd")
+const ProvincialGovernance = preload("res://src/core/provincial_governance.gd")
 
 var province := ProvinceSystem.new()
 var country := CountrySystem.new()
@@ -21,6 +22,7 @@ var peace := PeaceSystem.new()
 var stability := StabilitySystem.new()
 var strategic := StrategicMilitary.new()
 var ai := AIDirector.new()
+var provincial_governance := ProvincialGovernance.new()
 
 func process_turn(state, queue) -> Dictionary:
 	var phases := []
@@ -41,9 +43,14 @@ func process_turn(state, queue) -> Dictionary:
 	phases.append(_phase("battle", _execute_types(state, valid, ["attack"])))
 	phases.append(_phase("occupation", _occupation_logs(state)))
 	phases.append(_phase("peace", _execute_types(state, valid, ["offer_peace"])))
+	phases.append(_phase("provincial_governance_commands", _execute_types(state, valid, ["change_governance", "set_assimilation_policy"])))
+	phases.append(_phase("provincial_governance", provincial_governance.advance_turn(state)))
 	phases.append(_phase("economy", economy.process(state)))
+	phases.append(_phase("governance_income", provincial_governance.apply_economic_effects(state)))
 	phases.append(_phase("manpower", economy.recover_manpower(state)))
+	phases.append(_phase("governance_manpower", provincial_governance.apply_manpower_effects(state)))
 	phases.append(_phase("growth", province.apply_growth(state)))
+	phases.append(_phase("governance_growth", provincial_governance.apply_growth_effects(state)))
 	phases.append(_phase("stability", stability.process(state)))
 	phases.append(_phase("collapse", country.eliminate_defeated(state)))
 	phases.append(_phase("events", _process_events(state)))
@@ -64,21 +71,33 @@ func validate_command(state, command: Dictionary) -> Dictionary:
 	if not state.is_country_alive(country_id):
 		return {"valid": false, "reason": "명령 국가가 존재하지 않거나 멸망함"}
 	var type := str(command.command_type)
+	var effective_command: Dictionary = command.duplicate(true)
+	if type in ["recruit", "develop", "build_fort"]:
+		var prepared: Dictionary = provincial_governance.prepare_local_command(state, command)
+		if not bool(prepared.get("valid", false)):
+			return prepared
+		var normalized: Variant = prepared.get("command", effective_command)
+		if normalized is Dictionary:
+			effective_command = normalized
 	if type in ["declare_war", "improve_relations", "form_alliance", "break_alliance", "create_vassal", "release_vassal"]:
-		return diplomacy.validate_command(state, command)
+		return diplomacy.validate_command(state, effective_command)
 	if type == "offer_peace":
-		return peace.validate_offer(state, command)
+		return peace.validate_offer(state, effective_command)
 	if type == "recruit":
-		return military.validate_recruit(state, command)
+		return military.validate_recruit(state, effective_command)
 	if type in ["move", "attack"]:
-		return military.validate_move(state, command, type == "attack")
+		return military.validate_move(state, effective_command, type == "attack")
 	if type == "develop":
-		return province.validate_develop(state, command)
+		return province.validate_develop(state, effective_command)
 	if type == "build_fort":
-		return province.validate_develop(state, command)
+		return province.validate_develop(state, effective_command)
 	if type == "change_tax":
-		var rate := float(command.get("amount", command.get("payload", {}).get("tax_rate", -1.0)))
+		var rate := float(effective_command.get("amount", effective_command.get("payload", {}).get("tax_rate", -1.0)))
 		return {"valid": rate >= 0.0 and rate <= 0.6, "reason": "세율 범위 오류"}
+	if type == "change_governance":
+		return provincial_governance.validate_governance_change(state, effective_command)
+	if type == "set_assimilation_policy":
+		return provincial_governance.validate_assimilation_policy(state, effective_command)
 	return {"valid": false, "reason": "지원하지 않는 명령"}
 
 func _execute_types(state, commands: Array, types: Array) -> Array:
@@ -87,23 +106,63 @@ func _execute_types(state, commands: Array, types: Array) -> Array:
 		if str(command.command_type) not in types:
 			continue
 		var type := str(command.command_type)
+		var effective_command: Dictionary = command.duplicate(true)
+		var local_context: Dictionary = {}
+		if type in ["recruit", "develop", "build_fort"]:
+			local_context = provincial_governance.prepare_local_command(state, command)
+			if not bool(local_context.get("valid", false)):
+				logs.append({
+					"valid": false,
+					"type": type,
+					"reason": String(local_context.get("reason", "명령을 실행할 수 없음")),
+					"province_id": int(local_context.get("province_id", -1)),
+				})
+				continue
+			var normalized: Variant = local_context.get("command", effective_command)
+			if normalized is Dictionary:
+				effective_command = normalized
 		if type in ["declare_war", "improve_relations", "form_alliance", "break_alliance", "create_vassal", "release_vassal"]:
-			logs.append(diplomacy.execute(state, command))
+			logs.append(diplomacy.execute(state, effective_command))
 		elif type == "offer_peace":
-			logs.append(peace.execute_offer(state, command))
+			logs.append(peace.execute_offer(state, effective_command))
 		elif type == "recruit":
-			logs.append(military.recruit(state, command))
+			var recruitment: Dictionary = military.recruit(state, effective_command)
+			recruitment["requested_amount"] = int(command.get("amount", 0))
+			recruitment["command_precision"] = float(local_context.get("precision", 1.0))
+			logs.append(recruitment)
 		elif type == "move":
-			logs.append(military.move(state, command))
+			logs.append(military.move(state, effective_command))
 		elif type == "attack":
-			logs.append(battle.resolve_attack(state, command))
+			logs.append(battle.resolve_attack(state, effective_command))
 		elif type == "develop":
-			logs.append(province.develop(state, command))
+			logs.append(_execute_development_with_precision(state, effective_command, local_context))
 		elif type == "build_fort":
-			logs.append(province.build_fort(state, command))
+			logs.append(province.build_fort(state, effective_command))
 		elif type == "change_tax":
-			logs.append(country.change_tax(state, command))
+			logs.append(country.change_tax(state, effective_command))
+		elif type == "change_governance":
+			logs.append(provincial_governance.execute_governance_change(state, effective_command))
+		elif type == "set_assimilation_policy":
+			logs.append(provincial_governance.execute_assimilation_policy(state, effective_command))
 	return logs
+
+
+func _execute_development_with_precision(
+	state,
+	command: Dictionary,
+	local_context: Dictionary
+) -> Dictionary:
+	var result: Dictionary = province.develop(state, command)
+	if not bool(result.get("valid", false)):
+		return result
+	var precision := float(local_context.get("precision", 1.0))
+	provincial_governance.apply_development_precision(
+		state,
+		int(result.get("province_id", -1)),
+		precision
+	)
+	result["command_precision"] = precision
+	return result
 
 func _occupation_logs(state) -> Array:
 	var logs := []

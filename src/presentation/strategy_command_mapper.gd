@@ -34,6 +34,12 @@ static func build(
         "fortify":
             core_type = "build_fort"
             values["target_id"] = int(payload.get("province_id", -1))
+        "change_governance":
+            values["target_id"] = int(payload.get("province_id", -1))
+            values["payload"] = {"governance_level": String(payload.get("governance_level", ""))}
+        "set_assimilation_policy":
+            values["target_id"] = int(payload.get("province_id", -1))
+            values["payload"] = {"policy": String(payload.get("policy", ""))}
 
         "declare_war", "improve_relations":
             values["target_id"] = String(payload.get("target_country_id", ""))

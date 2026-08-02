@@ -3,7 +3,8 @@ extends RefCounted
 const SUPPORTED_TYPES := [
 	"recruit", "move", "attack", "develop", "build_fort", "change_tax",
 	"declare_war", "offer_peace", "improve_relations", "form_alliance",
-	"break_alliance", "create_vassal", "release_vassal"
+	"break_alliance", "create_vassal", "release_vassal",
+	"change_governance", "set_assimilation_policy"
 ]
 
 static func create(command_type: String, country_id: String, values: Dictionary = {}) -> Dictionary:

@@ -35,6 +35,9 @@ func present(core: Dictionary) -> Dictionary:
         "player_country_id": String(core.get("player_country_id", "")),
         "date": core.get("date", {}).duplicate(true),
         "turn": int(core.get("turn", 1)),
+        "notifications": core.get("notifications", []).duplicate(true),
+        "ui_preferences": core.get("ui_preferences", {}).duplicate(true),
+        "governance_state_version": 2,
         "map_tiles": [],
         "map_labels": []
     }

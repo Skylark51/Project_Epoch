@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "governance_levels": {
+    "direct": {
+      "name": "직접 통치",
+      "command_precision": 1.0,
+      "administrative_cost": 6.0,
+      "growth_stability": 1.0,
+      "policy_speed": 1.0,
+      "corruption_bias": -7.0,
+      "rebellion_bias": -5.0,
+      "tax_multiplier": 1.0
+    },
+    "delegated": {
+      "name": "방침 위임",
+      "command_precision": 0.76,
+      "administrative_cost": 3.0,
+      "growth_stability": 0.72,
+      "policy_speed": 0.72,
+      "corruption_bias": 5.0,
+      "rebellion_bias": 3.0,
+      "tax_multiplier": 0.91
+    },
+    "autonomous": {
+      "name": "완전 자율",
+      "command_precision": 0.48,
+      "administrative_cost": 1.0,
+      "growth_stability": 0.58,
+      "policy_speed": 0.42,
+      "corruption_bias": 11.0,
+      "rebellion_bias": 8.0,
+      "tax_multiplier": 0.78
+    }
+  },
+  "assimilation_policies": {
+    "status_quo": {
+      "name": "현상 유지",
+      "political_loyalty_delta": 0.25,
+      "civic_integration_delta": 0.05,
+      "cultural_assimilation_delta": 0.0,
+      "happiness_delta": 0.18,
+      "unrest_delta": -0.2
+    },
+    "gradual": {
+      "name": "완만한 통합",
+      "political_loyalty_delta": 0.48,
+      "civic_integration_delta": 0.38,
+      "cultural_assimilation_delta": 0.22,
+      "happiness_delta": 0.05,
+      "unrest_delta": -0.08
+    },
+    "active": {
+      "name": "적극적 통합",
+      "political_loyalty_delta": 0.7,
+      "civic_integration_delta": 0.72,
+      "cultural_assimilation_delta": 0.55,
+      "happiness_delta": -0.28,
+      "unrest_delta": 0.25
+    }
+  },
+  "occupation_stages": {
+    "immediate": {"name": "점령 직후", "tax_multiplier": 0.22, "production_multiplier": 0.38, "manpower_multiplier": 0.18, "resistance": 70.0, "security": 24.0, "administrative_cost": 7.0, "diplomatic_dispute": 100.0},
+    "sustained": {"name": "지속 통제", "tax_multiplier": 0.46, "production_multiplier": 0.58, "manpower_multiplier": 0.42, "resistance": 48.0, "security": 46.0, "administrative_cost": 5.0, "diplomatic_dispute": 72.0},
+    "de_facto": {"name": "사실상 편입", "tax_multiplier": 0.77, "production_multiplier": 0.82, "manpower_multiplier": 0.7, "resistance": 23.0, "security": 68.0, "administrative_cost": 3.0, "diplomatic_dispute": 42.0},
+    "formal": {"name": "정상 편입", "tax_multiplier": 1.0, "production_multiplier": 1.0, "manpower_multiplier": 1.0, "resistance": 4.0, "security": 86.0, "administrative_cost": 0.0, "diplomatic_dispute": 8.0}
+  },
+  "government_profiles": {
+    "tribal_confederation": {"appointment_mode": "부족장 합의", "allowed_levels": ["delegated", "autonomous"], "administrative_modifier": -0.15},
+    "aristocratic_council": {"appointment_mode": "귀족 평의회 추천", "allowed_levels": ["direct", "delegated", "autonomous"], "administrative_modifier": -0.05},
+    "feudal": {"appointment_mode": "봉신 서약", "allowed_levels": ["direct", "delegated", "autonomous"], "administrative_modifier": -0.1},
+    "military_governorate": {"appointment_mode": "군사 총독 임명", "allowed_levels": ["direct", "delegated", "autonomous"], "administrative_modifier": 0.0},
+    "commandery_county": {"appointment_mode": "중앙 관료 임명", "allowed_levels": ["direct", "delegated"], "administrative_modifier": 0.18},
+    "autocratic_bureaucracy": {"appointment_mode": "황실 관료 임명", "allowed_levels": ["direct", "delegated"], "administrative_modifier": 0.28}
+  },
+  "policy_minimum_turns": 3,
+  "policy_cooldown_turns": 2,
+  "formal_integration_turns": 10
+}

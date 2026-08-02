@@ -40,6 +40,13 @@ func migrate(data: Dictionary) -> Dictionary:
 		if not migrated.has("governance_state"):
 			migrated.governance_state = {}
 		version = 2
+	# Schema v2 remains the public save contract. These optional v2 additions
+	# receive defaults so older v2 saves load without a version bump.
+	if version == 2:
+		if not migrated.has("notifications"):
+			migrated.notifications = []
+		if not migrated.has("ui_preferences"):
+			migrated.ui_preferences = {}
 	if version != CURRENT_VERSION:
 		return {"ok": false, "error": "지원하지 않는 세이브 버전: %s" % version}
 	return {"ok": true, "data": migrated, "migrated_from": original}

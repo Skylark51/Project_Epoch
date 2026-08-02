@@ -16,6 +16,8 @@ var wars := {}
 var balance := {}
 var command_queue := {"commands": [], "next_id": 1}
 var governance_state := {}
+var notifications: Array = []
+var ui_preferences := {}
 var metadata := {}
 
 func from_dict(data: Dictionary) -> void:
@@ -34,6 +36,8 @@ func from_dict(data: Dictionary) -> void:
 	balance = data.get("balance", {}).duplicate(true)
 	command_queue = data.get("command_queue", command_queue).duplicate(true)
 	governance_state = data.get("governance_state", {}).duplicate(true)
+	notifications = data.get("notifications", []).duplicate(true)
+	ui_preferences = data.get("ui_preferences", {}).duplicate(true)
 	metadata = data.get("metadata", {}).duplicate(true)
 
 func to_dict() -> Dictionary:
@@ -45,7 +49,10 @@ func to_dict() -> Dictionary:
 		"relations": relations.duplicate(true), "treaties": treaties.duplicate(true),
 		"wars": wars.duplicate(true), "balance": balance.duplicate(true),
 		"command_queue": command_queue.duplicate(true),
-		"governance_state": governance_state.duplicate(true), "metadata": metadata.duplicate(true)
+		"governance_state": governance_state.duplicate(true),
+		"notifications": notifications.duplicate(true),
+		"ui_preferences": ui_preferences.duplicate(true),
+		"metadata": metadata.duplicate(true)
 	}
 
 func owned_provinces(country_id: String) -> Array[int]:
