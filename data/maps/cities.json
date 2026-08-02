@@ -11,8 +11,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 421.183,
-      "mapY": 226.2878,
+      "mapX": 459.7347,
+      "mapY": 269.72,
       "inBounds": true
     },
     {
@@ -24,8 +24,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 411.5069,
-      "mapY": 212.4462,
+      "mapX": 453.1699,
+      "mapY": 255.6194,
       "inBounds": true
     },
     {
@@ -37,8 +37,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 417.9182,
-      "mapY": 222.624,
+      "mapX": 457.2934,
+      "mapY": 265.7788,
       "inBounds": true
     },
     {
@@ -50,8 +50,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 419.5572,
-      "mapY": 227.7982,
+      "mapX": 457.7693,
+      "mapY": 270.4628,
       "inBounds": true
     },
     {
@@ -63,8 +63,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 421.9114,
-      "mapY": 229.3795,
+      "mapX": 459.7681,
+      "mapY": 272.4442,
       "inBounds": true
     },
     {
@@ -76,8 +76,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 425.6179,
-      "mapY": 221.9822,
+      "mapX": 465.1374,
+      "mapY": 267.5431,
       "inBounds": true
     },
     {
@@ -89,8 +89,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 433.1914,
-      "mapY": 221.6776,
+      "mapX": 472.7793,
+      "mapY": 269.5434,
       "inBounds": true
     },
     {
@@ -102,8 +102,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 425.7511,
-      "mapY": 235.2255,
+      "mapX": 462.2937,
+      "mapY": 278.3264,
       "inBounds": true
     },
     {
@@ -115,8 +115,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 425.4608,
-      "mapY": 238.4137,
+      "mapX": 461.2868,
+      "mapY": 280.8266,
       "inBounds": true
     },
     {
@@ -128,8 +128,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 423.5858,
-      "mapY": 237.7774,
+      "mapX": 459.5548,
+      "mapY": 279.754,
       "inBounds": true
     },
     {
@@ -141,8 +141,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 424.6052,
-      "mapY": 244.2256,
+      "mapX": 459.1248,
+      "mapY": 285.2877,
       "inBounds": true
     },
     {
@@ -154,8 +154,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 423.516,
-      "mapY": 251.5626,
+      "mapX": 456.3863,
+      "mapY": 290.9167,
       "inBounds": true
     },
     {
@@ -167,8 +167,8 @@
       "type": "port",
       "region": "korea",
       "enabled": true,
-      "mapX": 420.8775,
-      "mapY": 255.8112,
+      "mapX": 452.7929,
+      "mapY": 293.5804,
       "inBounds": true
     },
     {
@@ -180,8 +180,8 @@
       "type": "port",
       "region": "korea",
       "enabled": true,
-      "mapX": 429.4742,
-      "mapY": 254.5883,
+      "mapX": 461.6645,
+      "mapY": 295.1395,
       "inBounds": true
     },
     {
@@ -193,8 +193,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 428.0409,
-      "mapY": 252.8569,
+      "mapX": 460.6203,
+      "mapY": 293.3095,
       "inBounds": true
     },
     {
@@ -206,8 +206,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 431.869,
-      "mapY": 249.5691,
+      "mapX": 465.1875,
+      "mapY": 291.7782,
       "inBounds": true
     },
     {
@@ -219,8 +219,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 438.3204,
-      "mapY": 248.1061,
+      "mapX": 471.9677,
+      "mapY": 292.5058,
       "inBounds": true
     },
     {
@@ -232,8 +232,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 439.3467,
-      "mapY": 244.0097,
+      "mapX": 473.9149,
+      "mapY": 289.4871,
       "inBounds": true
     },
     {
@@ -245,8 +245,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 434.1556,
-      "mapY": 241.6406,
+      "mapX": 469.2563,
+      "mapY": 286.0247,
       "inBounds": true
     },
     {
@@ -258,8 +258,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 438.2935,
-      "mapY": 240.8446,
+      "mapX": 473.5731,
+      "mapY": 286.6068,
       "inBounds": true
     },
     {
@@ -271,8 +271,8 @@
       "type": "port",
       "region": "korea",
       "enabled": true,
-      "mapX": 438.8305,
-      "mapY": 238.9683,
+      "mapX": 474.5318,
+      "mapY": 285.244,
       "inBounds": true
     },
     {
@@ -284,8 +284,8 @@
       "type": "city",
       "region": "korea",
       "enabled": true,
-      "mapX": 433.98,
-      "mapY": 234.2012,
+      "mapX": 470.7528,
+      "mapY": 279.9372,
       "inBounds": true
     },
     {
@@ -297,8 +297,8 @@
       "type": "major_city",
       "region": "korea",
       "enabled": true,
-      "mapX": 423.492,
-      "mapY": 269.3294,
+      "mapX": 452.3687,
+      "mapY": 305.323,
       "inBounds": true
     },
     {
@@ -310,8 +310,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 351.2227,
-      "mapY": 210.8945,
+      "mapX": 393.2345,
+      "mapY": 236.4711,
       "inBounds": true
     },
     {
@@ -323,8 +323,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 356.6361,
-      "mapY": 218.6846,
+      "mapX": 396.8968,
+      "mapY": 244.3974,
       "inBounds": true
     },
     {
@@ -336,8 +336,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 393.8123,
-      "mapY": 185.9448,
+      "mapX": 441.4323,
+      "mapY": 228.869,
       "inBounds": true
     },
     {
@@ -349,8 +349,8 @@
       "type": "port",
       "region": "china",
       "enabled": true,
-      "mapX": 385.1199,
-      "mapY": 218.0383,
+      "mapX": 425.5259,
+      "mapY": 252.3257,
       "inBounds": true
     },
     {
@@ -362,8 +362,8 @@
       "type": "city",
       "region": "china",
       "enabled": true,
-      "mapX": 401.4753,
-      "mapY": 203.9748,
+      "mapX": 445.0425,
+      "mapY": 245.77,
       "inBounds": true
     },
     {
@@ -375,8 +375,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 403.058,
-      "mapY": 162.7868,
+      "mapX": 455.8835,
+      "mapY": 212.8256,
       "inBounds": true
     },
     {
@@ -388,8 +388,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 407.7076,
-      "mapY": 140.4274,
+      "mapX": 465.5591,
+      "mapY": 196.066,
       "inBounds": true
     },
     {
@@ -401,8 +401,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 357.3154,
-      "mapY": 244.9099,
+      "mapX": 391.6812,
+      "mapY": 265.8745,
       "inBounds": true
     },
     {
@@ -414,8 +414,8 @@
       "type": "port",
       "region": "china",
       "enabled": true,
-      "mapX": 379.3706,
-      "mapY": 248.9862,
+      "mapX": 412.82,
+      "mapY": 275.7263,
       "inBounds": true
     },
     {
@@ -427,8 +427,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 371.2932,
-      "mapY": 292.3585,
+      "mapX": 394.9935,
+      "mapY": 308.5155,
       "inBounds": true
     },
     {
@@ -440,8 +440,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 390.7606,
-      "mapY": 298.9673,
+      "mapX": 412.9753,
+      "mapY": 319.654,
       "inBounds": true
     },
     {
@@ -453,8 +453,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 382.1421,
-      "mapY": 310.2219,
+      "mapX": 401.827,
+      "mapY": 326.2268,
       "inBounds": true
     },
     {
@@ -466,8 +466,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 340.0902,
-      "mapY": 310.011,
+      "mapX": 359.8225,
+      "mapY": 313.5768,
       "inBounds": true
     },
     {
@@ -479,8 +479,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 302.4882,
-      "mapY": 270.396,
+      "mapX": 331.1252,
+      "mapY": 270.2803,
       "inBounds": true
     },
     {
@@ -492,8 +492,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 326.5033,
-      "mapY": 267.7114,
+      "mapX": 355.7438,
+      "mapY": 275.2289,
       "inBounds": true
     },
     {
@@ -505,8 +505,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 266.8007,
-      "mapY": 307.9893,
+      "mapX": 286.9874,
+      "mapY": 290.1879,
       "inBounds": true
     },
     {
@@ -518,8 +518,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 284.137,
-      "mapY": 320.1534,
+      "mapX": 301.5895,
+      "mapY": 305.2007,
       "inBounds": true
     },
     {
@@ -531,8 +531,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 333.7771,
-      "mapY": 390.1474,
+      "mapX": 335.4962,
+      "mapY": 376.7147,
       "inBounds": true
     },
     {
@@ -544,8 +544,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 340.1033,
-      "mapY": 396.3236,
+      "mapX": 340.4341,
+      "mapY": 383.6025,
       "inBounds": true
     },
     {
@@ -557,8 +557,8 @@
       "type": "major_city",
       "region": "china",
       "enabled": true,
-      "mapX": 378.8151,
-      "mapY": 355.5456,
+      "mapX": 388.312,
+      "mapY": 362.0088,
       "inBounds": true
     },
     {
@@ -570,8 +570,8 @@
       "type": "port",
       "region": "china",
       "enabled": true,
-      "mapX": 370.6379,
-      "mapY": 373.5147,
+      "mapX": 376.0957,
+      "mapY": 374.1598,
       "inBounds": true
     },
     {
@@ -583,8 +583,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 499.0667,
-      "mapY": 142.9219,
+      "mapX": 556.3575,
+      "mapY": 225.2007,
       "inBounds": true
     },
     {
@@ -596,8 +596,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 508.1532,
-      "mapY": 192.5371,
+      "mapX": 554.2914,
+      "mapY": 268.1479,
       "inBounds": true
     },
     {
@@ -609,8 +609,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 506.9401,
-      "mapY": 221.502,
+      "mapX": 546.5675,
+      "mapY": 291.2859,
       "inBounds": true
     },
     {
@@ -622,8 +622,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 507.1771,
-      "mapY": 224.1218,
+      "mapX": 546.2156,
+      "mapY": 293.4817,
       "inBounds": true
     },
     {
@@ -635,8 +635,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 490.0123,
-      "mapY": 233.2113,
+      "mapX": 527.0077,
+      "mapY": 295.7619,
       "inBounds": true
     },
     {
@@ -648,8 +648,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 482.9066,
-      "mapY": 237.4434,
+      "mapX": 518.9507,
+      "mapY": 297.0866,
       "inBounds": true
     },
     {
@@ -661,8 +661,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 481.805,
-      "mapY": 241.2669,
+      "mapX": 516.9897,
+      "mapY": 299.8616,
       "inBounds": true
     },
     {
@@ -674,8 +674,8 @@
       "type": "port",
       "region": "japan",
       "enabled": true,
-      "mapX": 479.7857,
-      "mapY": 241.9535,
+      "mapX": 514.8161,
+      "mapY": 299.8193,
       "inBounds": true
     },
     {
@@ -687,8 +687,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 462.1582,
-      "mapY": 250.5379,
+      "mapX": 495.2589,
+      "mapY": 301.5525,
       "inBounds": true
     },
     {
@@ -700,8 +700,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 449.6914,
-      "mapY": 262.4423,
+      "mapX": 480.1162,
+      "mapY": 307.5106,
       "inBounds": true
     },
     {
@@ -713,8 +713,8 @@
       "type": "port",
       "region": "japan",
       "enabled": true,
-      "mapX": 452.4152,
-      "mapY": 258.5852,
+      "mapX": 483.7071,
+      "mapY": 305.1898,
       "inBounds": true
     },
     {
@@ -726,8 +726,8 @@
       "type": "port",
       "region": "japan",
       "enabled": true,
-      "mapX": 447.4533,
-      "mapY": 272.0503,
+      "mapX": 475.7185,
+      "mapY": 314.641,
       "inBounds": true
     },
     {
@@ -739,8 +739,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 453.0507,
-      "mapY": 270.078,
+      "mapX": 481.7591,
+      "mapY": 314.7019,
       "inBounds": true
     },
     {
@@ -752,8 +752,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 453.9773,
-      "mapY": 282.8708,
+      "mapX": 479.8101,
+      "mapY": 325.3552,
       "inBounds": true
     },
     {
@@ -765,8 +765,8 @@
       "type": "city",
       "region": "japan",
       "enabled": true,
-      "mapX": 465.2157,
-      "mapY": 255.5865,
+      "mapX": 497.1816,
+      "mapY": 306.5555,
       "inBounds": true
     },
     {
@@ -778,8 +778,8 @@
       "type": "city",
       "region": "japan",
       "enabled": true,
-      "mapX": 472.8461,
-      "mapY": 247.8847,
+      "mapX": 506.5431,
+      "mapY": 302.5717,
       "inBounds": true
     },
     {
@@ -791,8 +791,8 @@
       "type": "major_city",
       "region": "japan",
       "enabled": true,
-      "mapX": 441.4368,
-      "mapY": 344.1196,
+      "mapX": 453.5021,
+      "mapY": 371.3225,
       "inBounds": true
     }
   ],

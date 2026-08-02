@@ -17,7 +17,8 @@
     "central_meridian": 111.5,
     "latitude_of_origin": 35.0,
     "standard_parallel_1": 25.0,
-    "standard_parallel_2": 47.0
+    "standard_parallel_2": 47.0,
+    "orientation_clockwise_degrees": 16.0
   },
   "sources": {
     "land": "res://data/geography/ne_10m_land.geojson",

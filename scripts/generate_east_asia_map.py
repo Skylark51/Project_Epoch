@@ -93,6 +93,9 @@ class LambertConformalConic:
     def __init__(self, config: dict, bounds: dict, width: int, height: int):
         self.lon0 = math.radians(config["central_meridian"])
         self.lat0 = math.radians(config["latitude_of_origin"])
+        self.orientation_clockwise = math.radians(
+            float(config.get("orientation_clockwise_degrees", 0.0))
+        )
         phi1 = math.radians(config["standard_parallel_1"])
         phi2 = math.radians(config["standard_parallel_2"])
         self.n = math.log(math.cos(phi1) / math.cos(phi2)) / math.log(
@@ -125,11 +128,28 @@ class LambertConformalConic:
         self.max_y = max(p[1] for p in boundary)
 
     def project_raw(self, lon: float, lat: float) -> tuple[float, float]:
+        return self.orient_raw(*self.project_lcc_raw(lon, lat))
+
+    def project_lcc_raw(self, lon: float, lat: float) -> tuple[float, float]:
         phi = math.radians(max(-89.999, min(89.999, lat)))
         lam = math.radians(lon)
         rho = self.f / math.pow(math.tan(math.pi / 4 + phi / 2), self.n)
         theta = self.n * (lam - self.lon0)
         return rho * math.sin(theta), self.rho0 - rho * math.cos(theta)
+
+    def orient_raw(self, x: float, y: float) -> tuple[float, float]:
+        if self.orientation_clockwise == 0.0:
+            return x, y
+        cosine = math.cos(self.orientation_clockwise)
+        sine = math.sin(self.orientation_clockwise)
+        return cosine * x + sine * y, -sine * x + cosine * y
+
+    def unorient_raw(self, x: float, y: float) -> tuple[float, float]:
+        if self.orientation_clockwise == 0.0:
+            return x, y
+        cosine = math.cos(self.orientation_clockwise)
+        sine = math.sin(self.orientation_clockwise)
+        return cosine * x - sine * y, sine * x + cosine * y
 
     def tile(self, lon: float, lat: float) -> tuple[float, float]:
         x, y = self.project_raw(lon, lat)
@@ -138,8 +158,9 @@ class LambertConformalConic:
         return col, row
 
     def lonlat(self, col: float, row: float) -> tuple[float, float]:
-        x = self.min_x + col / self.width * (self.max_x - self.min_x)
-        y = self.max_y - row / self.height * (self.max_y - self.min_y)
+        oriented_x = self.min_x + col / self.width * (self.max_x - self.min_x)
+        oriented_y = self.max_y - row / self.height * (self.max_y - self.min_y)
+        x, y = self.unorient_raw(oriented_x, oriented_y)
         rho_sign = 1.0 if self.n >= 0 else -1.0
         rho = rho_sign * math.hypot(x, self.rho0 - y)
         theta = math.atan2(rho_sign * x, rho_sign * (self.rho0 - y))
