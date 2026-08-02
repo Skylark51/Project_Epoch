@@ -7,6 +7,13 @@ signal selection_changed(province_ids: Array[int])
 signal province_dropped(from_id: int, to_id: int)
 signal command_target_selected(province_id: int)
 signal city_selected(city_id: String)
+signal city_selection_changed(city_id: String)
+signal command_target_rejected(
+    reason: String,
+    source_id: int,
+    target_id: int
+)
+signal interaction_feedback_changed(message: String)
 signal tooltip_changed(text: String, screen_position: Vector2)
 signal camera_changed(zoom: float)
 
@@ -54,6 +61,14 @@ const StrategicMapPaletteScript = preload(
 )
 
 const PICK_BUCKET_SIZE := 160.0
+const MAP_DRAG_THRESHOLD := 8.0
+const CITY_PICK_RADIUS_SCREEN := 10.0
+const MINOR_CITY_MIN_ZOOM := 0.24
+const CITY_LABEL_MIN_ZOOM := 0.64
+const ALL_CITY_LABEL_MIN_ZOOM := 1.10
+const DEFAULT_PLAY_LONGITUDE := 126.9780
+const DEFAULT_PLAY_LATITUDE := 37.5665
+const DEFAULT_PLAY_ZOOM := 0.72
 
 
 # Runtime snapshot ------------------------------------------------------------
@@ -68,6 +83,9 @@ var armies: Dictionary = {}
 var relations: Dictionary = {}
 var wars: Array = []
 var player_country_id := ""
+var _visual_revision := 0
+var _last_snapshot_turn := -1
+var _loaded_world_map_id := ""
 
 
 # Selection and command interaction -----------------------------------------
@@ -87,6 +105,12 @@ var _drag_source_id := -1
 var _command_paths: Array[Dictionary] = []
 var _peace_demands: Array[int] = []
 var _hovered_id := -1
+var selected_city_id := ""
+var _city_capital_ids: Dictionary = {}
+var _city_warning_ids: Dictionary = {}
+var _city_navigation_order: Array[String] = []
+var _command_valid_target_ids: Dictionary = {}
+var _command_target_reasons: Dictionary = {}
 
 
 # Camera and drag state -------------------------------------------------------
@@ -101,6 +125,7 @@ var _pan_origin := Vector2.ZERO
 var _drag_button := MOUSE_BUTTON_NONE
 var _did_drag := false
 var _state_before_drag: InputState = InputState.IDLE
+var _drag_cursor_active := false
 
 
 # Rendering and spatial indexes ---------------------------------------------
@@ -108,7 +133,17 @@ var _state_before_drag: InputState = InputState.IDLE
 var _world_rect := Rect2(0, 0, 800, 560)
 var _spatial_buckets: Dictionary = {}
 var _tile_spatial_buckets: Dictionary = {}
+var _selection_center_buckets: Dictionary = {}
 var _screen_text_commands: Array[Dictionary] = []
+var _city_label_slots: Dictionary = {}
+
+var spatial_index_rebuild_count := 0
+var snapshot_apply_time_us := 0
+var turn_update_time_us := 0
+var map_mode_switch_time_us := 0
+var hover_pick_total_time_us := 0
+var hover_pick_max_time_us := 0
+var hover_pick_count := 0
 
 var debug_map_enabled := false
 var show_chunk_boundaries := false
@@ -128,27 +163,232 @@ func _ready() -> void:
 # Public map contract ---------------------------------------------------------
 
 func set_snapshot(snapshot: Dictionary) -> void:
-    provinces = snapshot.get("provinces", {}).duplicate(true)
-    map_tiles = snapshot.get("map_tiles", []).duplicate(true)
-    map_labels = snapshot.get("map_labels", []).duplicate(true)
-    countries = snapshot.get("countries", {}).duplicate(true)
-    armies = snapshot.get("armies", {}).duplicate(true)
-    relations = snapshot.get("relations", {}).duplicate(true)
-    wars = snapshot.get("wars", []).duplicate(true)
-    player_country_id = String(snapshot.get("player_country_id", ""))
-    world_map_id = String(snapshot.get("world_map_id", ""))
+    var started_at := Time.get_ticks_usec()
+    var next_provinces := _shallow_dictionary(snapshot.get("provinces", {}))
+    var next_map_tiles := _shallow_array(snapshot.get("map_tiles", []))
+    var next_map_labels := _shallow_array(snapshot.get("map_labels", []))
+    var next_countries := _shallow_dictionary(snapshot.get("countries", {}))
+    var next_armies := _shallow_dictionary(snapshot.get("armies", {}))
+    var next_relations := _shallow_dictionary(snapshot.get("relations", {}))
+    var next_wars := _shallow_array(snapshot.get("wars", []))
+    var next_player_country_id := String(snapshot.get("player_country_id", ""))
+    var next_world_map_id := String(snapshot.get("world_map_id", ""))
+    var next_turn := int(snapshot.get("turn", -1))
+    # Dictionary equality is exact for the snapshot value graph and avoids the
+    # allocation-heavy JSON serialization that used to dominate no-op syncs.
+    var geometry_changed := next_world_map_id != world_map_id
+    if next_world_map_id.is_empty():
+        geometry_changed = (
+            geometry_changed
+            or next_map_tiles != map_tiles
+        )
+    var visual_changed := (
+        next_countries != countries
+        or next_provinces != provinces
+        or next_armies != armies
+        or next_relations != relations
+        or next_wars != wars
+        or next_player_country_id != player_country_id
+        or next_map_labels != map_labels
+    )
 
-    _load_world_map_if_needed()
-    _recalculate_world_rect()
-    _rebuild_spatial_index()
-    queue_redraw()
+    provinces = next_provinces
+    map_tiles = next_map_tiles
+    map_labels = next_map_labels
+    countries = next_countries
+    armies = next_armies
+    relations = next_relations
+    wars = next_wars
+    player_country_id = next_player_country_id
+    world_map_id = next_world_map_id
+
+    var runtime_mapping_changed := _load_world_map_if_needed()
+    if geometry_changed or runtime_mapping_changed:
+        _recalculate_world_rect()
+        _rebuild_spatial_index()
+    if visual_changed or runtime_mapping_changed:
+        _visual_revision += 1
+
+    _prune_invalid_selections()
+    snapshot_apply_time_us = Time.get_ticks_usec() - started_at
+    if _last_snapshot_turn != -1 and next_turn != _last_snapshot_turn:
+        turn_update_time_us = snapshot_apply_time_us
+    _last_snapshot_turn = next_turn
+
+    if geometry_changed or visual_changed or runtime_mapping_changed:
+        queue_redraw()
 
 
 func set_mode(value: String) -> void:
-    if not MODE_LABELS.has(value):
+    if not MODE_LABELS.has(value) or map_mode == value:
         return
+    var started_at := Time.get_ticks_usec()
     map_mode = value
+    map_mode_switch_time_us = Time.get_ticks_usec() - started_at
     queue_redraw()
+
+
+func set_command_target_validation(
+    valid_target_ids: Array,
+    rejection_reasons: Dictionary = {}
+) -> void:
+    _command_valid_target_ids.clear()
+    for province_id_value in valid_target_ids:
+        _command_valid_target_ids[int(province_id_value)] = true
+    _command_target_reasons = rejection_reasons.duplicate(false)
+    queue_redraw()
+
+
+func set_city_highlights(
+    capital_city_ids: Array,
+    warning_city_ids: Array
+) -> void:
+    _city_capital_ids = _id_set(capital_city_ids)
+    _city_warning_ids = _id_set(warning_city_ids)
+    queue_redraw()
+
+
+func set_city_navigation_order(city_ids: Array) -> void:
+    _city_navigation_order.clear()
+    for city_id_value in city_ids:
+        var city_id := String(city_id_value)
+        if not city_id.is_empty() and city_id not in _city_navigation_order:
+            _city_navigation_order.append(city_id)
+
+
+func select_city(city_id: String, center_camera := true) -> bool:
+    if world_map == null or world_map.city_record(city_id).is_empty():
+        return false
+
+    selected_city_id = city_id
+    city_selected.emit(city_id)
+    city_selection_changed.emit(city_id)
+    if center_camera:
+        focus_city(city_id)
+    else:
+        queue_redraw()
+    return true
+
+
+func clear_city_selection() -> void:
+    if selected_city_id.is_empty():
+        return
+    selected_city_id = ""
+    city_selection_changed.emit("")
+    queue_redraw()
+
+
+func select_next_city(direction := 1) -> String:
+    var city_ids := _resolved_city_navigation_order()
+    if city_ids.is_empty():
+        return ""
+
+    var step := 1 if direction >= 0 else -1
+    var selected_index := city_ids.find(selected_city_id)
+    if selected_index == -1:
+        selected_index = -1 if step > 0 else 0
+    var next_index := posmod(selected_index + step, city_ids.size())
+    var next_city_id := city_ids[next_index]
+    select_city(next_city_id, true)
+    return next_city_id
+
+
+func focus_city(city_id: String, target_zoom := -1.0) -> bool:
+    if world_map == null or world_map.city_record(city_id).is_empty():
+        return false
+    if target_zoom > 0.0:
+        zoom = clampf(target_zoom, min_zoom, max_zoom)
+    pan = StrategicMapGeometryScript.focus_pan(
+        size,
+        world_map.city_position_for(city_id),
+        zoom
+    )
+    _clamp_pan()
+    camera_changed.emit(zoom)
+    queue_redraw()
+    return true
+
+
+func frame_play_area() -> void:
+    if world_map == null:
+        frame_world()
+        return
+    go_to_lonlat(
+        DEFAULT_PLAY_LONGITUDE,
+        DEFAULT_PLAY_LATITUDE,
+        DEFAULT_PLAY_ZOOM
+    )
+
+
+func city_pick_radius_for_zoom(value: float = zoom) -> float:
+    return CITY_PICK_RADIUS_SCREEN / maxf(value, 0.001)
+
+
+func performance_metrics() -> Dictionary:
+    return {
+        "snapshot_apply_us": snapshot_apply_time_us,
+        "turn_update_us": turn_update_time_us,
+        "spatial_index_rebuilds": spatial_index_rebuild_count,
+        "visual_revision": _visual_revision,
+        "map_mode_switch_us": map_mode_switch_time_us,
+        "hover_pick_count": hover_pick_count,
+        "hover_pick_average_us": (
+            float(hover_pick_total_time_us) / hover_pick_count
+            if hover_pick_count > 0 else 0.0
+        ),
+        "hover_pick_max_us": hover_pick_max_time_us,
+        "visible_chunks": visible_chunk_count,
+        "rendered_tiles": last_rendered_tile_count,
+        "world_map": world_map.performance_metrics() if world_map != null else {}
+    }
+
+
+func _shallow_dictionary(value: Variant) -> Dictionary:
+    if value is Dictionary:
+        return value.duplicate(false)
+    return {}
+
+
+func _shallow_array(value: Variant) -> Array:
+    if value is Array:
+        return value.duplicate(false)
+    return []
+
+
+func _id_set(values: Array) -> Dictionary:
+    var result: Dictionary = {}
+    for value in values:
+        var id := String(value)
+        if not id.is_empty():
+            result[id] = true
+    return result
+
+
+func _resolved_city_navigation_order() -> Array[String]:
+    if world_map == null:
+        return []
+    var result: Array[String] = []
+    for city_id in _city_navigation_order:
+        if not world_map.city_record(city_id).is_empty():
+            result.append(city_id)
+    if not result.is_empty():
+        return result
+    return world_map.city_ids_in_display_order()
+
+
+func _prune_invalid_selections() -> void:
+    var retained_provinces: Array[int] = []
+    for province_id in selected_province_ids:
+        if provinces.has(province_id):
+            retained_provinces.append(province_id)
+    selected_province_ids = retained_provinces
+    selected_province_id = (
+        selected_province_ids.back()
+        if not selected_province_ids.is_empty() else -1
+    )
+    if world_map != null and not selected_city_id.is_empty():
+        if world_map.city_record(selected_city_id).is_empty():
+            selected_city_id = ""
 
 
 func mode_label() -> String:
@@ -158,6 +398,9 @@ func mode_label() -> String:
 func set_interaction_state(value: InputState, source_id: int = -1) -> void:
     input_state = value
     command_source_id = source_id
+    if value == InputState.IDLE:
+        _command_valid_target_ids.clear()
+        _command_target_reasons.clear()
     queue_redraw()
 
 
@@ -165,6 +408,8 @@ func clear_interaction() -> void:
     input_state = InputState.IDLE
     command_source_id = -1
     _peace_demands.clear()
+    _command_valid_target_ids.clear()
+    _command_target_reasons.clear()
     queue_redraw()
 
 
@@ -327,18 +572,47 @@ func _handle_left_button(event: InputEventMouseButton) -> void:
             _drag_source_id = province_id
             _selection_origin = event.position
             _selection_current = event.position
+            _set_drag_cursor(Control.CURSOR_CROSS)
+            queue_redraw()
+            return
+
+        if event.shift_pressed and input_state == InputState.IDLE:
+            _selection_dragging = true
+            _selection_additive = true
+            _selection_origin = event.position
+            _selection_current = event.position
+            _set_drag_cursor(Control.CURSOR_CROSS)
+            queue_redraw()
             return
 
         _selection_additive = event.shift_pressed
         _begin_map_drag(event.button_index, event.position)
         return
 
+    if _selection_dragging:
+        _finish_selection(event.position)
+        _set_drag_cursor(Control.CURSOR_ARROW)
+        return
+
     if _command_drag:
         var target_id := _province_at(event.position)
         if target_id != -1 and target_id != _drag_source_id:
             province_dropped.emit(_drag_source_id, target_id)
+        elif target_id == _drag_source_id:
+            command_target_rejected.emit(
+                "??? ?? ????? ??? ? ? ????.",
+                _drag_source_id,
+                target_id
+            )
+        else:
+            command_target_rejected.emit(
+                "?? ?? ?? ??? ??? ?? ? ????.",
+                _drag_source_id,
+                target_id
+            )
         _command_drag = false
         _drag_source_id = -1
+        _set_drag_cursor(Control.CURSOR_ARROW)
         queue_redraw()
         return
 
@@ -348,6 +622,7 @@ func _handle_left_button(event: InputEventMouseButton) -> void:
 func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
     if _command_drag:
         _selection_current = event.position
+        _update_hovered_province(_province_at(event.position), event.global_position)
         queue_redraw()
         accept_event()
         return
@@ -363,16 +638,22 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
         accept_event()
         return
 
-    var next_hovered_id := _province_at(event.position)
-    if next_hovered_id == _hovered_id:
-        return
-
-    _hovered_id = next_hovered_id
-    tooltip_changed.emit(
-        _tooltip_for(next_hovered_id),
+    if _update_hovered_province(
+        _province_at(event.position),
         event.global_position
-    )
-    queue_redraw()
+    ):
+        queue_redraw()
+
+
+func _update_hovered_province(
+    next_hovered_id: int,
+    global_position: Vector2
+) -> bool:
+    if next_hovered_id == _hovered_id:
+        return false
+    _hovered_id = next_hovered_id
+    tooltip_changed.emit(_tooltip_for(next_hovered_id), global_position)
+    return true
 
 
 func _begin_map_drag(button: MouseButton, position: Vector2) -> void:
@@ -383,10 +664,12 @@ func _begin_map_drag(button: MouseButton, position: Vector2) -> void:
 
 
 func _continue_map_drag(position: Vector2) -> void:
-    if not _did_drag and position.distance_to(_drag_origin) > 5.0:
+    if not _did_drag and position.distance_to(_drag_origin) >= MAP_DRAG_THRESHOLD:
         _state_before_drag = input_state
         _did_drag = true
         input_state = InputState.DRAGGING_MAP
+        _set_drag_cursor(Control.CURSOR_DRAG)
+        interaction_feedback_changed.emit("?? ?? ?")
 
     if not _did_drag:
         return
@@ -402,11 +685,13 @@ func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
 
     var did_drag := _did_drag
     _drag_button = MOUSE_BUTTON_NONE
+    _set_drag_cursor(Control.CURSOR_ARROW)
 
     if input_state == InputState.DRAGGING_MAP:
         input_state = _state_before_drag
 
     if did_drag:
+        queue_redraw()
         return
 
     if button == MOUSE_BUTTON_RIGHT:
@@ -414,10 +699,6 @@ func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
         return
 
     if button == MOUSE_BUTTON_LEFT:
-        var clicked_city := _city_at(position)
-        if not clicked_city.is_empty():
-            city_selected.emit(clicked_city)
-
         var province_id := _province_at(position)
         if input_state in [
             InputState.CHOOSING_MOVE_TARGET,
@@ -426,6 +707,10 @@ func _finish_map_drag(button: MouseButton, position: Vector2) -> void:
         ]:
             _handle_target_click(province_id)
             return
+
+        var clicked_city := _city_at(position)
+        if not clicked_city.is_empty():
+            select_city(clicked_city, false)
 
         _selection_origin = position
         _finish_selection(position)
@@ -439,7 +724,7 @@ func _finish_selection(position: Vector2) -> void:
     if _selection_additive:
         next_selection.assign(selected_province_ids)
 
-    if _selection_origin.distance_to(position) < 7.0:
+    if _selection_origin.distance_to(position) < MAP_DRAG_THRESHOLD:
         _toggle_clicked_province(position, next_selection)
     else:
         _append_provinces_in_rectangle(position, next_selection)
@@ -469,20 +754,50 @@ func _append_provinces_in_rectangle(
         _selection_origin,
         position - _selection_origin
     ).abs()
+    var world_selection_rect := Rect2(
+        _screen_to_world(selection_rect.position),
+        selection_rect.size / zoom
+    ).abs()
+    var minimum_cell := _selection_bucket_for(world_selection_rect.position)
+    var maximum_cell := _selection_bucket_for(world_selection_rect.end)
 
-    for province_id_value in provinces.keys():
-        var province_id := int(province_id_value)
-        var screen_center := (
-            _province_center(provinces[province_id]) * zoom + pan
-        )
-        if (
-            selection_rect.has_point(screen_center)
-            and province_id not in next_selection
-        ):
-            next_selection.append(province_id)
+    for column in range(minimum_cell.x, maximum_cell.x + 1):
+        for row in range(minimum_cell.y, maximum_cell.y + 1):
+            for province_id_value in _selection_center_buckets.get(
+                Vector2i(column, row),
+                []
+            ):
+                var province_id := int(province_id_value)
+                if not provinces.has(province_id):
+                    continue
+                var screen_center := (
+                    _province_center(provinces[province_id]) * zoom + pan
+                )
+                if (
+                    selection_rect.has_point(screen_center)
+                    and province_id not in next_selection
+                ):
+                    next_selection.append(province_id)
 
 
 func _handle_target_click(province_id: int) -> void:
+    var is_target_selection := input_state in [
+        InputState.CHOOSING_MOVE_TARGET,
+        InputState.CHOOSING_ATTACK_TARGET,
+        InputState.SELECTING_PEACE_TERMS
+    ]
+    if is_target_selection:
+        var rejection_reason := _command_target_rejection_reason(province_id)
+        if not rejection_reason.is_empty():
+            command_target_rejected.emit(
+                rejection_reason,
+                command_source_id,
+                province_id
+            )
+            interaction_feedback_changed.emit(rejection_reason)
+            queue_redraw()
+            return
+
     if province_id == -1:
         return
 
@@ -497,6 +812,29 @@ func _handle_target_click(province_id: int) -> void:
 
     if province_id != command_source_id:
         command_target_selected.emit(province_id)
+
+
+func _command_target_rejection_reason(province_id: int) -> String:
+    if province_id == -1:
+        return "?? ?? ?? ??? ??? ?? ? ????."
+    if province_id == command_source_id and command_source_id != -1:
+        return "??? ?? ????? ??? ? ? ????."
+    if (
+        not _command_valid_target_ids.is_empty()
+        and not _command_valid_target_ids.has(province_id)
+    ):
+        return String(
+            _command_target_reasons.get(
+                province_id,
+                "?? ??? ?? ??? ????."
+            )
+        )
+    return ""
+
+
+func _set_drag_cursor(cursor_shape: int) -> void:
+    mouse_default_cursor_shape = cursor_shape
+    _drag_cursor_active = cursor_shape != Control.CURSOR_ARROW
 
 
 # Camera calculations --------------------------------------------------------
@@ -533,45 +871,45 @@ func _screen_to_world(point: Vector2) -> Vector2:
 # Picking --------------------------------------------------------------------
 
 func _city_at(screen_point: Vector2) -> String:
+    var started_at := Time.get_ticks_usec()
     if world_map == null:
+        _record_hover_pick(Time.get_ticks_usec() - started_at)
         return ""
 
-    var world_position := _screen_to_world(screen_point)
-    for city_value in world_map.cities:
-        if city_value is not Dictionary:
-            continue
-
-        var city: Dictionary = city_value
-        if not bool(city.get("enabled", true)):
-            continue
-        if not bool(city.get("inBounds", false)):
-            continue
-
-        var position := Vector2(
-            float(city.get("mapX", 0.0)),
-            float(city.get("mapY", 0.0))
-        ) * world_map.tile_size
-        if world_position.distance_to(position) <= 9.0 / zoom:
-            return String(city.get("id", ""))
-
-    return ""
+    var city := world_map.city_at_world(
+        _screen_to_world(screen_point),
+        city_pick_radius_for_zoom()
+    )
+    _record_hover_pick(Time.get_ticks_usec() - started_at)
+    return String(city.get("id", ""))
 
 
 func _province_at(screen_point: Vector2) -> int:
+    var started_at := Time.get_ticks_usec()
     var world_position := _screen_to_world(screen_point)
+    var province_id := -1
 
     if world_map != null:
         var tile := world_map.tile_at_world(world_position)
-        return world_map.province_id(tile.x, tile.y)
+        province_id = world_map.province_id(tile.x, tile.y)
+    else:
+        var cell := Vector2i(
+            floori(world_position.x / PICK_BUCKET_SIZE),
+            floori(world_position.y / PICK_BUCKET_SIZE)
+        )
+        if not map_tiles.is_empty():
+            province_id = _province_from_tile_candidates(world_position, cell)
+        else:
+            province_id = _province_from_polygon_candidates(world_position, cell)
 
-    var cell := Vector2i(
-        floori(world_position.x / PICK_BUCKET_SIZE),
-        floori(world_position.y / PICK_BUCKET_SIZE)
-    )
+    _record_hover_pick(Time.get_ticks_usec() - started_at)
+    return province_id
 
-    if not map_tiles.is_empty():
-        return _province_from_tile_candidates(world_position, cell)
-    return _province_from_polygon_candidates(world_position, cell)
+
+func _record_hover_pick(elapsed_us: int) -> void:
+    hover_pick_count += 1
+    hover_pick_total_time_us += elapsed_us
+    hover_pick_max_time_us = maxi(hover_pick_max_time_us, elapsed_us)
 
 
 func _province_from_tile_candidates(
@@ -736,6 +1074,7 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         * world_map.chunk_size
         * world_map.chunk_size
     )
+    _city_label_slots.clear()
 
     if zoom < 0.32 and world_map.overview_texture != null:
         _draw_world_overview()
@@ -745,10 +1084,10 @@ func _draw_world_map(_numeric_range: Vector2) -> void:
         if show_coast_highlight:
             _draw_coast_highlight(world_view)
 
-    _draw_world_labels()
+    _draw_world_labels(world_view)
     if show_region_ids:
         _draw_region_ids()
-    _draw_cities()
+    _draw_cities(world_view)
 
 
 func _draw_world_overview() -> void:
@@ -758,7 +1097,8 @@ func _draw_world_overview() -> void:
         provinces,
         player_country_id,
         relations,
-        wars
+        wars,
+        _visual_revision
     )
     draw_texture_rect(overview, world_map.world_rect(), false)
     last_rendered_tile_count = 0
@@ -779,7 +1119,8 @@ func _draw_visible_world_chunks(chunks: Rect2i) -> void:
                 provinces,
                 player_country_id,
                 relations,
-                wars
+                wars,
+                _visual_revision
             )
             var rect := Rect2(
                 Vector2(float(chunk_x), float(chunk_y)) * chunk_world_size,
@@ -797,7 +1138,16 @@ func _draw_visible_world_chunks(chunks: Rect2i) -> void:
 
 
 func _draw_world_selection(world_view: Rect2) -> void:
-    if selected_province_ids.is_empty() and _hovered_id == -1:
+    var is_target_selection := input_state in [
+        InputState.CHOOSING_MOVE_TARGET,
+        InputState.CHOOSING_ATTACK_TARGET,
+        InputState.SELECTING_PEACE_TERMS
+    ]
+    if (
+        selected_province_ids.is_empty()
+        and _hovered_id == -1
+        and (not is_target_selection or command_source_id == -1)
+    ):
         return
 
     var tile_minimum := world_map.tile_at_world(world_view.position)
@@ -812,16 +1162,16 @@ func _draw_world_selection(world_view: Rect2) -> void:
             mini(world_map.width - 1, tile_maximum.x) + 1
         ):
             var province_id := world_map.province_id(column, row)
-            if (
-                province_id not in selected_province_ids
-                and province_id != _hovered_id
-            ):
-                continue
-
-            var color := Color(0.86, 0.91, 0.92, 0.28)
-            if province_id in selected_province_ids:
+            var color := Color.TRANSPARENT
+            if is_target_selection and province_id == command_source_id:
+                color = Color(0.30, 0.72, 0.96, 0.52)
+            elif province_id in selected_province_ids:
                 color = Color(0.96, 0.83, 0.45, 0.43)
+            elif province_id == _hovered_id:
+                color = _hover_overlay_color(province_id, is_target_selection)
 
+            if is_zero_approx(color.a):
+                continue
             draw_rect(
                 Rect2(
                     Vector2(column, row) * world_map.tile_size,
@@ -831,6 +1181,17 @@ func _draw_world_selection(world_view: Rect2) -> void:
                 false,
                 1.5 / zoom
             )
+
+
+func _hover_overlay_color(
+    province_id: int,
+    is_target_selection: bool
+) -> Color:
+    if not is_target_selection:
+        return Color(0.86, 0.91, 0.92, 0.28)
+    if _command_target_rejection_reason(province_id).is_empty():
+        return Color(0.36, 0.88, 0.62, 0.58)
+    return Color(0.94, 0.35, 0.31, 0.60)
 
 
 func _draw_coast_highlight(world_view: Rect2) -> void:
@@ -859,15 +1220,18 @@ func _draw_coast_highlight(world_view: Rect2) -> void:
             )
 
 
-func _draw_world_labels() -> void:
+func _draw_world_labels(world_view: Rect2) -> void:
     if zoom < 0.16:
         return
 
+    var label_view := world_view.grow(160.0 / zoom)
     for label in WORLD_LABELS:
         var position := world_map.world_from_lonlat(
             float(label[1]),
             float(label[2])
         )
+        if not label_view.has_point(position):
+            continue
         var color := Color(0.94, 0.88, 0.68, 0.56)
         if bool(label[3]):
             color = Color(0.60, 0.80, 0.88, 0.62)
@@ -881,26 +1245,49 @@ func _draw_world_labels() -> void:
         )
 
 
-func _draw_cities() -> void:
-    for city_value in world_map.cities:
-        if city_value is not Dictionary:
-            continue
-
+func _draw_cities(world_view: Rect2) -> void:
+    var city_view := world_view.grow(city_pick_radius_for_zoom() * 2.0)
+    for city_value in world_map.cities_in_world_rect(city_view):
         var city: Dictionary = city_value
-        if not bool(city.get("enabled", true)):
-            continue
-        if not bool(city.get("inBounds", false)):
-            continue
-
+        var city_id := String(city.get("id", ""))
         var is_major_city := String(city.get("type", "")) == "major_city"
-        if zoom < 0.14 and not is_major_city:
+        var is_capital := _city_capital_ids.has(city_id)
+        var is_warning := _city_warning_ids.has(city_id)
+        var is_selected := city_id == selected_city_id
+        if (
+            zoom < MINOR_CITY_MIN_ZOOM
+            and not is_major_city
+            and not is_capital
+            and not is_warning
+            and not is_selected
+        ):
             continue
 
-        var position := Vector2(
-            float(city.get("mapX", 0.0)),
-            float(city.get("mapY", 0.0))
-        ) * world_map.tile_size
+        var position := world_map.city_position_for(city_id)
         var radius := (4.0 if is_major_city else 2.6) / zoom
+        if is_capital:
+            draw_circle(position, radius * 1.95, Color(0.95, 0.72, 0.24, 0.24))
+            _draw_star(position + Vector2(0.0, -radius * 1.15), radius * 0.95, Color("#f5c85c"))
+        if is_warning:
+            draw_arc(
+                position,
+                radius * 1.78,
+                0.0,
+                TAU,
+                16,
+                Color("#ef7564"),
+                1.8 / zoom
+            )
+        if is_selected:
+            draw_arc(
+                position,
+                radius * 1.48,
+                0.0,
+                TAU,
+                16,
+                Color("#75d7e7"),
+                1.7 / zoom
+            )
 
         draw_circle(position, radius, Color("#f4d58a"))
         draw_arc(
@@ -913,14 +1300,39 @@ func _draw_cities() -> void:
             1.2 / zoom
         )
 
-        if zoom >= 0.52:
+        var show_label := (
+            zoom >= ALL_CITY_LABEL_MIN_ZOOM
+            or (
+                zoom >= CITY_LABEL_MIN_ZOOM
+                and (is_major_city or is_capital or is_warning or is_selected)
+            )
+            or is_selected
+        )
+        if show_label and _reserve_city_label_slot(position, is_selected):
             _queue_map_text(
                 position,
-                String(city.get("name", city.get("id", ""))),
+                String(city.get("name", city_id)),
                 12,
                 Color("#f2ead8"),
                 Vector2(6.0, -3.0)
             )
+
+
+func _reserve_city_label_slot(
+    world_position: Vector2,
+    force_label: bool
+) -> bool:
+    if force_label:
+        return true
+    var screen_position := world_position * zoom + pan
+    var slot := Vector2i(
+        floori(screen_position.x / 112.0),
+        floori(screen_position.y / 24.0)
+    )
+    if _city_label_slots.has(slot):
+        return false
+    _city_label_slots[slot] = true
+    return true
 
 
 func _draw_region_ids() -> void:
@@ -1370,11 +1782,14 @@ func _at_war(first_country_id: String, second_country_id: String) -> bool:
 
 # Spatial index and data loading --------------------------------------------
 
-func _load_world_map_if_needed() -> void:
+func _load_world_map_if_needed() -> bool:
     if world_map_id.is_empty():
-        return
+        if world_map != null:
+            world_map = null
+            _loaded_world_map_id = ""
+        return false
 
-    if world_map == null:
+    if world_map == null or _loaded_world_map_id != world_map_id:
         world_map = WorldMapDataScript.new()
         if not world_map.load_default():
             push_error(
@@ -1382,18 +1797,30 @@ func _load_world_map_if_needed() -> void:
                 % world_map.error_message
             )
             world_map = null
+            _loaded_world_map_id = ""
+            return false
+        _loaded_world_map_id = world_map_id
 
-    if world_map != null:
-        world_map.bind_runtime_provinces(provinces)
+    return world_map.bind_runtime_provinces(provinces)
 
 
 func _rebuild_spatial_index() -> void:
     _spatial_buckets.clear()
     _tile_spatial_buckets.clear()
+    _selection_center_buckets.clear()
 
     for province_id_value in provinces.keys():
         var province_id := int(province_id_value)
-        var polygon := _polygon_for(provinces[province_id])
+        var province: Dictionary = provinces[province_id]
+        var center := _province_center(province)
+        var center_cell := _selection_bucket_for(center)
+        if not _selection_center_buckets.has(center_cell):
+            _selection_center_buckets[center_cell] = []
+        _selection_center_buckets[center_cell].append(province_id)
+
+        if world_map != null:
+            continue
+        var polygon := _polygon_for(province)
         StrategicMapGeometryScript.add_polygon_to_buckets(
             _spatial_buckets,
             province_id,
@@ -1401,17 +1828,27 @@ func _rebuild_spatial_index() -> void:
             PICK_BUCKET_SIZE
         )
 
-    for tile_index in range(map_tiles.size()):
-        var tile_value = map_tiles[tile_index]
-        if tile_value is not Dictionary:
-            continue
+    if world_map == null:
+        for tile_index in range(map_tiles.size()):
+            var tile_value = map_tiles[tile_index]
+            if tile_value is not Dictionary:
+                continue
 
-        StrategicMapGeometryScript.add_polygon_to_buckets(
-            _tile_spatial_buckets,
-            tile_index,
-            _tile_polygon(tile_value),
-            PICK_BUCKET_SIZE
-        )
+            StrategicMapGeometryScript.add_polygon_to_buckets(
+                _tile_spatial_buckets,
+                tile_index,
+                _tile_polygon(tile_value),
+                PICK_BUCKET_SIZE
+            )
+
+    spatial_index_rebuild_count += 1
+
+
+func _selection_bucket_for(world_position: Vector2) -> Vector2i:
+    return Vector2i(
+        floori(world_position.x / PICK_BUCKET_SIZE),
+        floori(world_position.y / PICK_BUCKET_SIZE)
+    )
 
 
 func _add_polygon_to_buckets(
